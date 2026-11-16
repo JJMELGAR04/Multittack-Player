@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+out/
+target/
+engine/build/
+*.tsbuildinfo
+
+# Tauri generated
+apps/desktop/src-tauri/gen/schemas/
+
+# IDE / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# Logs & env
+*.log
+.env
+.env.*
+!.env.example
+
+# Local databases / user data
+*.sqlite
+*.sqlite3
+*.db
+
+# Secrets / signing
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Third-party SDKs fetched locally (never commit)
+third_party/asio/
+third_party/JUCE/
+apps/desktop/e2e-output/
