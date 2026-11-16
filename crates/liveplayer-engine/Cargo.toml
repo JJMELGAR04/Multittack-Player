@@ -1,0 +1,15 @@
+[package]
+name = "liveplayer-engine"
+description = "Safe Rust bindings to the LIVEPLAYER native C++/JUCE engine (C ABI)"
+version.workspace = true
+edition.workspace = true
+links = "liveplayer_engine"
+build = "build.rs"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[build-dependencies]
+cmake = "0.1"
