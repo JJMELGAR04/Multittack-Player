@@ -173,6 +173,8 @@ export interface TrackRecord {
   filePath: string;
   role: TrackRole;
   bus: Bus;
+  /** Where the track is shown (0 = top); the user can drag tracks. */
+  displayOrder: number;
 }
 
 export interface SectionRecord {

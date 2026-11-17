@@ -29,10 +29,10 @@ function clock(sec: number): string {
   return `${h}:${String(m).padStart(2, "0")}:${r.toFixed(1).padStart(4, "0")}`;
 }
 
-const OUTPUTS: { mode: OutputMode; label: string; icon: typeof Speaker; needs: number; hint: string }[] = [
-  { mode: "stereo", label: "Ensayo", icon: Headphones, needs: 1, hint: "Todo junto por 1-2 (audífonos, ensayo)" },
-  { mode: "split", label: "En vivo · 2 salidas", icon: SplitSquareHorizontal, needs: 2, hint: "Salida 1: instrumentos → PA · Salida 2: click y cues → banda" },
-  { mode: "quad", label: "En vivo · 4 salidas", icon: Speaker, needs: 4, hint: "1-2: instrumentos → PA · 3-4: click y cues → banda" },
+const OUTPUTS: { mode: OutputMode; label: string; short: string; icon: typeof Speaker; needs: number; hint: string }[] = [
+  { mode: "stereo", label: "Ensayo", short: "Ensayo", icon: Headphones, needs: 1, hint: "Todo junto por 1-2 (audífonos, ensayo)" },
+  { mode: "split", label: "En vivo · 2 salidas", short: "Vivo 2", icon: SplitSquareHorizontal, needs: 2, hint: "Salida 1: instrumentos → PA · Salida 2: click y cues → banda" },
+  { mode: "quad", label: "En vivo · 4 salidas", short: "Vivo 4", icon: Speaker, needs: 4, hint: "1-2: instrumentos → PA · 3-4: click y cues → banda" },
 ];
 
 export function Toolbar(p: Props) {
@@ -45,17 +45,17 @@ export function Toolbar(p: Props) {
   const btn = "flex h-11 w-11 items-center justify-center rounded-lg bg-ink-800 text-ink-100 hover:bg-ink-700 disabled:opacity-40";
 
   return (
-    <div className="flex shrink-0 flex-wrap items-center gap-x-5 gap-y-2 border-b border-ink-800 bg-ink-900 px-4 py-2">
+    <div className="flex h-16 shrink-0 items-center gap-4 border-b border-ink-800 bg-gradient-to-b from-ink-850 to-ink-900 px-3">
       {/* Song */}
       <div className="flex min-w-0 items-center gap-2">
         <button
           type="button"
           onClick={p.onOpen}
           disabled={!p.native}
-          className="flex h-9 items-center gap-1.5 rounded-lg bg-info-500 px-3 text-sm font-semibold text-white hover:bg-info-400 disabled:opacity-40"
+          className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-info-500 px-3 text-sm font-semibold text-white hover:bg-info-400 disabled:opacity-40"
           title="Abrir un zip, una carpeta o pistas"
         >
-          <FolderOpen size={16} /> Abrir pistas
+          <FolderOpen size={16} /> <span className="hidden 2xl:inline">Abrir pistas</span><span className="2xl:hidden sr-only">Abrir pistas</span>
         </button>
         {p.recent.length > 0 && (
           <label className="flex items-center" title="Canciones recientes">
@@ -64,7 +64,7 @@ export function Toolbar(p: Props) {
               aria-label="Canciones recientes"
               value=""
               onChange={(e) => e.target.value && p.onOpenRecent(Number(e.target.value))}
-              className="max-w-40 rounded-md border border-ink-700 bg-ink-850 px-2 py-1.5 text-xs text-ink-100"
+              className="w-28 rounded-md border border-ink-700 bg-ink-850 px-2 py-1.5 text-xs text-ink-100"
             >
               <option value="">Recientes…</option>
               {p.recent.map((r) => (
@@ -78,7 +78,7 @@ export function Toolbar(p: Props) {
         <div className="min-w-0 pl-1">
           <h1 className="text-[11px] font-semibold uppercase tracking-wider text-ink-400">Multitrack Studio</h1>
           <div className="flex items-center gap-2">
-            <span className="max-w-48 truncate text-sm font-bold text-ink-100" title={p.song?.title}>
+            <span className="max-w-40 truncate text-sm font-bold text-ink-100" title={p.song?.title}>
               {p.song?.title ?? "Sin canción"}
             </span>
             {p.song && (
@@ -118,8 +118,8 @@ export function Toolbar(p: Props) {
         <button type="button" className={btn} onClick={p.onStop} disabled={!p.ready} aria-label="Detener" title="Detener (Esc)">
           <Square size={18} />
         </button>
-        <div className="ml-2 flex min-w-44 flex-col items-center rounded-lg bg-black px-4 py-1" aria-label="Posición">
-          <span className="font-mono text-[30px] leading-none font-semibold tabular-nums text-go-400" style={{ textShadow: "0 0 10px rgba(74,222,128,0.45)" }}>
+        <div className="ml-1 flex min-w-40 flex-col items-center rounded-lg border border-ink-800 bg-black px-3 py-1 shadow-[inset_0_0_12px_rgba(0,0,0,0.9)]" aria-label="Posición">
+          <span className="font-mono text-[26px] leading-none font-semibold tabular-nums text-go-400" style={{ textShadow: "0 0 10px rgba(74,222,128,0.45)" }}>
             {clock(pos)}
           </span>
           <span className="font-mono text-[10px] text-ink-400">
@@ -129,22 +129,22 @@ export function Toolbar(p: Props) {
       </div>
 
       {/* Tempo */}
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-1.5 rounded-lg border border-ink-800 bg-ink-950/60 px-2 py-1">
         <span className="text-[10px] uppercase tracking-wider text-ink-400">Tempo</span>
         <button type="button" disabled={!target} onClick={() => target && p.onTargetBpm(target - 1)} aria-label="Bajar 1 BPM"
           className="h-7 w-7 rounded bg-ink-800 text-sm text-ink-100 hover:bg-ink-700 disabled:opacity-40">−</button>
         <span className="w-12 text-center font-mono text-base text-ink-100">{target ? formatBpm(target) : "—"}</span>
         <button type="button" disabled={!target} onClick={() => target && p.onTargetBpm(target + 1)} aria-label="Subir 1 BPM"
           className="h-7 w-7 rounded bg-ink-800 text-sm text-ink-100 hover:bg-ink-700 disabled:opacity-40">+</button>
-        <span className={`w-14 text-center font-mono text-xs ${p.ratio === 1 ? "text-ink-400" : "text-live-400"}`}>{formatPercent(p.ratio)}</span>
-        <button type="button" disabled={p.ratio === 1} onClick={() => p.onTargetBpm(null)}
+        <span className={`w-12 text-center font-mono text-xs ${p.ratio === 1 ? "text-ink-400" : "text-live-400"}`}>{formatPercent(p.ratio)}</span>
+        <button type="button" disabled={p.ratio === 1} onClick={() => p.onTargetBpm(null)} title="Volver al tempo original"
           className="flex h-7 items-center gap-1 rounded bg-ink-800 px-2 text-xs text-ink-200 hover:bg-ink-700 disabled:opacity-40">
           <RotateCcw size={11} /> Original
         </button>
       </div>
 
       {/* Outputs + engine */}
-      <div className="ml-auto flex items-center gap-3">
+      <div className="ml-auto flex shrink-0 items-center gap-3">
         <div className="flex overflow-hidden rounded-lg border border-ink-700" role="radiogroup" aria-label="Salida">
           {OUTPUTS.map((o) => {
             const Icon = o.icon;
@@ -164,7 +164,9 @@ export function Toolbar(p: Props) {
                 }`}
               >
                 <Icon size={14} />
-                {o.label}
+                <span className="hidden 2xl:inline">{o.label}</span>
+                <span className="2xl:hidden">{o.short}</span>
+                <span className="sr-only 2xl:hidden">{o.label}</span>
               </button>
             );
           })}

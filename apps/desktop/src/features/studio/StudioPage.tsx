@@ -4,7 +4,7 @@ import type { OutputMode, SectionRecord } from "@/lib/ipc/types";
 import { Arrange } from "./Arrange";
 import { ImportDialog } from "./ImportDialog";
 import { Mixer } from "./Mixer";
-import { beatsPerBar, dbToGain, gainToDb, kindLabel, sectionAt, snapToBar, withEnds } from "./model";
+import { beatsPerBar, dbToGain, gainToDb, kindLabel, moveItem, sectionAt, snapToBar, withEnds } from "./model";
 import { OutputPanel, TracksPanel } from "./OutputPanel";
 import { SectionsPanel } from "./SectionsPanel";
 import { TempoControl } from "./TempoControl";
@@ -150,12 +150,16 @@ export function StudioPage() {
     studio.saveSections([...base, { startSec: at, kind: "section", label: kindLabel("section"), source: "user" }]);
   };
 
+  // Tracks in the order the user arranged them (click and cues first by default).
   const tracks = loaded
-    ? loaded.tracks.map((t, i) => {
-        const rec = song?.tracks.find((r) => r.position === i);
-        return { index: i, name: rec?.name ?? t.name, role: rec?.role ?? "other", bus: rec?.bus ?? t.bus };
-      })
+    ? loaded.tracks
+        .map((t, i) => {
+          const rec = song?.tracks.find((r) => r.position === i);
+          return { index: i, name: rec?.name ?? t.name, role: rec?.role ?? "other", bus: rec?.bus ?? t.bus, order: rec?.displayOrder ?? i };
+        })
+        .sort((a, b) => a.order - b.order || a.index - b.index)
     : [];
+  const reorder = (from: number, to: number) => studio.reorderTracks(moveItem(tracks, from, to).map((t) => t.index));
   const outputMode: OutputMode = studio.outputSettings?.mode ?? transport?.outputMode ?? "stereo";
   const monitorGain = studio.outputSettings?.monitorGain ?? 1;
   const setOutputMode = (mode: OutputMode) => studio.setOutput({ mode, monitorGain });
@@ -270,11 +274,12 @@ export function StudioPage() {
               onSectionMove={moveSection}
               onMute={studio.toggleMute}
               onSolo={studio.toggleSolo}
+              onReorder={reorder}
             />
           </div>
 
           {/* Bottom dock */}
-          <div className="flex shrink-0 flex-col border-t-2 border-ink-700 bg-ink-900" style={{ height: dockOpen ? 300 : 34 }}>
+          <div className="flex shrink-0 flex-col border-t-2 border-ink-700 bg-ink-900" style={{ height: dockOpen ? 318 : 34 }}>
             <div className="flex h-8 shrink-0 items-center gap-1 border-b border-ink-800 px-2" role="tablist" aria-label="Paneles del Studio">
               {DOCK_TABS.map((t) => {
                 const Icon = t.icon;

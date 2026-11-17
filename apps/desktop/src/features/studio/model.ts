@@ -168,6 +168,15 @@ export function barBeat(sec: number, bpm: number | null, downbeatSec: number, be
   return { bar, beat };
 }
 
+/** Returns a copy of `list` with the item at `from` moved to `to`. */
+export function moveItem<T>(list: T[], from: number, to: number): T[] {
+  const out = [...list];
+  if (from < 0 || from >= out.length) return out;
+  const [item] = out.splice(from, 1);
+  out.splice(Math.max(0, Math.min(out.length, to)), 0, item as T);
+  return out;
+}
+
 /** Effective per-track gains from mixer state (solo wins over mute; dB faders). */
 export function effectiveGains(volumesDb: number[], mute: boolean[], solo: boolean[]): number[] {
   const anySolo = solo.some(Boolean);

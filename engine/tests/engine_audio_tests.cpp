@@ -546,8 +546,9 @@ static void testOutputRouting()
         std::printf ("  meters: keys %.3f click %.3f | main %.3f/%.3f monitor %.3f/%.3f\n", m[0], m[1], m[2], m[3], m[4], m[5]);
         CHECK (m.size() == 6 && std::abs (m[0] - 0.5f) < 1e-4f && std::abs (m[1] - 0.25f) < 1e-4f);
         CHECK (std::abs (m[2] - 0.5f) < 1e-3f && std::abs (m[4] - 0.25f) < 1e-3f);
+        const float before = m[0];
         player.takeMeters (m);
-        CHECK (m[0] == 0.0f); // reset after reading (no audio rendered in between)
+        CHECK (m[0] == before); // reading is non-destructive (several readers see the same)
     }
 
     // Monitor volume only affects the click bus.

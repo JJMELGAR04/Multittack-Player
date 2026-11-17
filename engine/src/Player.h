@@ -59,8 +59,9 @@ public:
     }
     int getNumTracks() const noexcept { return numTracks; }
 
-    /** Peak levels since the previous call (linear): one per track (after its
-        gain), then main L/R and monitor L/R (after the limiters). Resets them. */
+    /** Peak levels (linear) with a ~300 ms release: one per track (after its
+        gain), then main L/R and monitor L/R (after the limiters). Reading does
+        not reset them, so any number of readers see the same values. */
     void takeMeters (std::vector<float>& out);
     int getOutputChannels() const noexcept { return outputChannels.load(); }
 

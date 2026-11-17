@@ -189,9 +189,9 @@ void Player::takeMeters (std::vector<float>& out)
 {
     out.clear();
     for (int t = 0; t < numTracks; ++t)
-        out.push_back (trackPeak[(size_t) t].exchange (0.0f));
+        out.push_back (trackPeak[(size_t) t].load (std::memory_order_relaxed));
     for (auto& b : busPeak)
-        out.push_back (b.exchange (0.0f));
+        out.push_back (b.load (std::memory_order_relaxed));
 }
 
 static void storeMax (std::atomic<float>& a, float v) noexcept
@@ -507,6 +507,15 @@ void Player::audioDeviceIOCallbackWithContext (const float* const*, int,
 
     masterGain.setTargetValue (masterGainTarget.load());
     monitorGain.setTargetValue (monitorGainTarget.load());
+
+    // Meter release: peaks decay with a ~300 ms time constant (held by storeMax below).
+    {
+        const float decay = std::exp (-(float) numSamples / (0.3f * (float) deviceSampleRate));
+        for (int t = 0; t < numTracks; ++t)
+            trackPeak[(size_t) t].store (trackPeak[(size_t) t].load (std::memory_order_relaxed) * decay, std::memory_order_relaxed);
+        for (auto& b : busPeak)
+            b.store (b.load (std::memory_order_relaxed) * decay, std::memory_order_relaxed);
+    }
     mainTrim.setTargetValue (mainTrimTarget.load());
     monitorTrim.setTargetValue (monitorTrimTarget.load());
 

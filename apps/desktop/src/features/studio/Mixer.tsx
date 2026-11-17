@@ -12,7 +12,7 @@ export interface MixerTrack {
   bus: Bus;
 }
 
-const FADER_H = 150;
+const FADER_H = 140;
 
 /** Vertical fader made from a native range input (keyboard + wheel accessible). */
 function Fader({ value, onChange, label }: { value: number; onChange: (db: number) => void; label: string }) {
@@ -63,14 +63,19 @@ interface StripProps {
   onSolo?: () => void;
   wide?: boolean;
   footnote?: string;
+  number?: number;
 }
 
-function Strip({ name, color, db, onDb, read, badge, mute, solo, onMute, onSolo, wide, footnote }: StripProps) {
+function Strip({ name, color, db, onDb, read, badge, mute, solo, onMute, onSolo, wide, footnote, number }: StripProps) {
   return (
     <div
-      className={`flex shrink-0 flex-col items-center gap-1.5 border-r border-ink-800 px-1.5 pt-2 ${wide ? "w-28 bg-ink-850" : "w-[78px]"}`}
+      className={`relative flex shrink-0 flex-col items-center gap-1.5 border-r border-black/60 px-1.5 pt-1.5 ${
+        wide ? "w-28 bg-gradient-to-b from-ink-800 to-ink-850" : "w-[80px] bg-gradient-to-b from-ink-850 to-ink-900"
+      }`}
       data-strip={name}
     >
+      <div className="absolute inset-x-0 top-0 h-0.5" style={{ background: color }} />
+      {number !== undefined && <span className="font-mono text-[9px] text-ink-400">{number}</span>}
       <span
         className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${
           badge === "monitor" ? "bg-info-500/20 text-info-400" : "bg-go-500/15 text-go-400"
@@ -80,10 +85,10 @@ function Strip({ name, color, db, onDb, read, badge, mute, solo, onMute, onSolo,
         {badge === "monitor" ? <Headphones size={10} /> : <Speaker size={10} />}
         {badge === "monitor" ? "Banda" : "PA"}
       </span>
-      <span className="font-mono text-[11px] text-ink-100">{formatDb(db).replace(" dB", "")}</span>
+      <span className="w-14 rounded bg-black px-1 text-center font-mono text-[11px] text-go-400">{formatDb(db).replace(" dB", "")}</span>
       <div className="flex items-end gap-1.5">
         <Fader value={db} onChange={onDb} label={`Volumen de ${name}`} />
-        <Meter read={read} height={FADER_H} barWidth={wide ? 6 : 4} />
+        <Meter read={read} height={FADER_H} barWidth={wide ? 7 : 5} />
       </div>
       <div className="flex gap-1">
         {onMute && <ToggleButton active={!!mute} onClick={onMute} color="#f97316" label={`Silenciar ${name}`}>M</ToggleButton>}
@@ -121,9 +126,10 @@ interface MixerProps {
 export function Mixer(p: MixerProps) {
   return (
     <div className="flex h-full min-w-0 overflow-x-auto overflow-y-hidden" role="group" aria-label="Mezclador">
-      {p.tracks.map((t) => (
+      {p.tracks.map((t, row) => (
         <Strip
           key={t.index}
+          number={row + 1}
           name={t.name}
           color={ROLE_COLORS[t.role]}
           db={p.volumesDb[t.index] ?? 0}
@@ -136,7 +142,8 @@ export function Mixer(p: MixerProps) {
           onSolo={() => p.onSolo(t.index)}
         />
       ))}
-      <div className="ml-auto flex border-l-2 border-ink-700">
+      <div className="min-w-4 flex-1 bg-ink-950" />
+      <div className="flex border-l-2 border-ink-700 shadow-[-6px_0_12px_rgba(0,0,0,0.5)]">
         <Strip
           name="PA · instrumentos"
           color="#22c55e"

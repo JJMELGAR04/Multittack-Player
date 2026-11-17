@@ -56,6 +56,24 @@ pub struct TrackRecord {
     pub file_path: String,
     pub role: String,
     pub bus: String,
+    /// Where the track is shown (0 = top). The user can drag tracks.
+    pub display_order: u32,
+}
+
+/// Default display order: click first, cues second, then the band in load order.
+pub fn default_display_order(roles: &[&str]) -> Vec<u32> {
+    let rank = |r: &str| match r {
+        "click" => 0,
+        "cues" => 1,
+        _ => 2,
+    };
+    let mut idx: Vec<usize> = (0..roles.len()).collect();
+    idx.sort_by_key(|&i| (rank(roles[i]), i));
+    let mut order = vec![0u32; roles.len()];
+    for (shown, &i) in idx.iter().enumerate() {
+        order[i] = shown as u32;
+    }
+    order
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -168,10 +186,13 @@ impl Database {
         let id = tx.last_insert_rowid();
         {
             let mut stmt = tx.prepare(
-                "INSERT INTO song_tracks (song_id, position, name, file_path, role, bus) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO song_tracks (song_id, position, name, file_path, role, bus, display_order)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             )?;
+            let roles: Vec<&str> = tracks.iter().map(|t| t.role.as_str()).collect();
+            let order = default_display_order(&roles);
             for (i, t) in tracks.iter().enumerate() {
-                stmt.execute(params![id, i as i64, t.name.trim(), t.file_path, t.role, bus_for_role(&t.role)])?;
+                stmt.execute(params![id, i as i64, t.name.trim(), t.file_path, t.role, bus_for_role(&t.role), order[i]])?;
             }
         }
         tx.commit()?;
@@ -194,6 +215,30 @@ impl Database {
             params![song_id, position, name.trim(), role, bus_for_role(role)],
         )?;
         if n == 0 { Err(DbError::NotFound(format!("pista {position} de la canción {song_id}"))) } else { Ok(()) }
+    }
+
+    /// Saves the order in which the tracks are shown: `positions` lists every
+    /// track position (load order) from top to bottom.
+    pub fn set_track_order(&mut self, song_id: i64, positions: &[u32]) -> Result<(), DbError> {
+        let count: u32 =
+            self.conn.query_row("SELECT COUNT(*) FROM song_tracks WHERE song_id = ?1", [song_id], |r| r.get(0))?;
+        if count == 0 {
+            return Err(DbError::NotFound(format!("canción {song_id}")));
+        }
+        let mut sorted = positions.to_vec();
+        sorted.sort_unstable();
+        if sorted != (0..count).collect::<Vec<u32>>() {
+            return Err(invalid("el orden debe incluir cada pista una sola vez"));
+        }
+        let tx = self.conn.transaction()?;
+        {
+            let mut stmt = tx.prepare("UPDATE song_tracks SET display_order = ?3 WHERE song_id = ?1 AND position = ?2")?;
+            for (shown, pos) in positions.iter().enumerate() {
+                stmt.execute(params![song_id, pos, shown as u32])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     pub fn set_song_info(&self, id: i64, title: &str, time_signature: &str) -> Result<(), DbError> {
@@ -260,9 +305,18 @@ impl Database {
 
         song.tracks = self
             .conn
-            .prepare("SELECT position, name, file_path, role, bus FROM song_tracks WHERE song_id = ?1 ORDER BY position")?
+            .prepare(
+                "SELECT position, name, file_path, role, bus, display_order FROM song_tracks WHERE song_id = ?1 ORDER BY position",
+            )?
             .query_map([id], |r| {
-                Ok(TrackRecord { position: r.get(0)?, name: r.get(1)?, file_path: r.get(2)?, role: r.get(3)?, bus: r.get(4)? })
+                Ok(TrackRecord {
+                    position: r.get(0)?,
+                    name: r.get(1)?,
+                    file_path: r.get(2)?,
+                    role: r.get(3)?,
+                    bus: r.get(4)?,
+                    display_order: r.get(5)?,
+                })
             })?
             .collect::<Result<_, _>>()?;
         song.sections = self.sections(id)?;
@@ -359,6 +413,29 @@ mod tests {
 
     fn meta() -> NewSongMeta {
         NewSongMeta { original_bpm: None, time_signature: "4/4".into(), source_archive: None }
+    }
+
+    #[test]
+    fn click_and_cues_come_first_and_order_can_change() {
+        let mut db = Database::open_in_memory().unwrap();
+        let t = |name: &str, role: &str| NewTrack { name: name.into(), file_path: format!("C:\\x\\{name}.wav"), role: role.into() };
+        let id = db
+            .create_song("s", &[t("Bass", "bass"), t("Drums", "drums"), t("Guia", "cues"), t("Click", "click")], &meta())
+            .unwrap();
+        let shown = |db: &Database| {
+            let mut tr = db.get_song(id).unwrap().unwrap().tracks;
+            tr.sort_by_key(|x| x.display_order);
+            tr.into_iter().map(|x| x.name).collect::<Vec<_>>()
+        };
+        assert_eq!(shown(&db), vec!["Click", "Guia", "Bass", "Drums"]);
+
+        // User drags Drums to the top.
+        db.set_track_order(id, &[1, 3, 2, 0]).unwrap();
+        assert_eq!(shown(&db), vec!["Drums", "Click", "Guia", "Bass"]);
+        assert!(db.set_track_order(id, &[0, 0, 1, 2]).is_err());
+        assert!(db.set_track_order(id, &[0, 1, 2]).is_err());
+        assert!(matches!(db.set_track_order(999, &[0]), Err(DbError::NotFound(_))));
+        assert_eq!(default_display_order(&["bass", "click"]), vec![1, 0]);
     }
 
     #[test]

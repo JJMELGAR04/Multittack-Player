@@ -187,7 +187,8 @@ lp_result lp_engine_set_output_mode(lp_engine* engine, int32_t mode);
 lp_result lp_engine_set_monitor_gain(lp_engine* engine, double gain);
 
 /**
- * Level meters: peak (linear) reached since the previous call, then reset.
+ * Level meters: peak level (linear) with a ~300 ms release. Reading does not
+ * reset them (several readers are fine).
  * Layout: one value per track (after its gain), then main L, main R,
  * monitor L, monitor R (after the safety limiters). *out_count receives the
  * number of values (tracks + 4). Two-call pattern on the float count.

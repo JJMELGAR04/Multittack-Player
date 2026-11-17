@@ -204,6 +204,12 @@ pub fn studio_update_track(
     Ok(song)
 }
 
+/// Order in which the tracks are shown (positions from top to bottom).
+#[tauri::command]
+pub fn studio_reorder_tracks(db: State<'_, DbState>, song_id: i64, positions: Vec<u32>) -> CommandResult<()> {
+    Ok(lock(&db)?.set_track_order(song_id, &positions)?)
+}
+
 #[tauri::command]
 pub fn studio_set_song_info(db: State<'_, DbState>, song_id: i64, title: String, time_signature: String) -> CommandResult<()> {
     Ok(lock(&db)?.set_song_info(song_id, &title, &time_signature)?)
@@ -342,7 +348,7 @@ pub fn transport_set_tempo_ratio(engine: State<'_, Engine>, ratio: f64) -> Comma
     Ok(engine.set_tempo_ratio(ratio)?)
 }
 
-/// Level meters (peaks since the previous call), polled by the UI ~25 times/s.
+/// Level meters (peak with ~300 ms release), polled by the UI ~25 times/s.
 #[tauri::command]
 pub fn studio_meters(engine: State<'_, Engine>) -> CommandResult<Meters> {
     Ok(engine.meters()?)

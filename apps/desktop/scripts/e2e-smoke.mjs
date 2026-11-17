@@ -121,8 +121,30 @@ try {
   check("sections detected", labels === "Intro, Estrofa 1, Coro 1, Estrofa 2, Coro 2, Puente, Coro 3, Final", labels);
   await sleep(600); // debounced saves
   const record = await invoke("studio_get_song", { songId: opened.id });
+  const laneOrder = () => evaluate(`[...document.querySelectorAll("[data-track]")].sort((a, b) => a.offsetTop - b.offsetTop).map(d => d.dataset.track).join(", ")`);
+  check("click shown first by default", (await laneOrder()).startsWith("Click"), await laneOrder());
   check("tempo + sections saved in the database", record.originalBpm === 96 && record.bpmSource === "detected" && record.sectionsInitialized && record.sections.length === 8);
   await shot("03-studio-loaded");
+
+  // Drag "Lead" by its grip to the top row.
+  const dragged = await evaluate(`(async () => {
+    const grip = document.querySelector("[aria-label='Arrastrar Lead para cambiar el orden']");
+    const r = grip.getBoundingClientRect();
+    const x = r.left + r.width / 2, y0 = r.top + r.height / 2;
+    const ev = (type, y) => grip.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 7, button: 0, clientX: x, clientY: y }));
+    ev("pointerdown", y0);
+    for (let k = 1; k <= 10; k++) { ev("pointermove", y0 - k * 30); await new Promise(r => setTimeout(r, 16)); }
+    ev("pointerup", y0 - 300);
+    return true;
+  })()`);
+  await sleep(700); // debounced save
+  const afterDrag = await laneOrder();
+  check("drag a track header to reorder", dragged && afterDrag.startsWith("Lead"), afterDrag);
+  const reordered = await invoke("studio_get_song", { songId: opened.id });
+  const shownOrder = [...reordered.tracks].sort((a, b) => a.displayOrder - b.displayOrder).map((tr) => tr.name).join(", ");
+  check("new order saved with the song", shownOrder === afterDrag, shownOrder);
+  const mixerOrder = await evaluate(`[...document.querySelectorAll("[data-strip]")].map(d => d.dataset.strip).slice(0, 5).join(", ")`);
+  check("mixer follows the same order", mixerOrder === afterDrag, mixerOrder);
 
   await clickButton("Reproducir");
   await sleep(1500);
@@ -149,9 +171,9 @@ try {
   check("track meters move while playing", peaks.filter((v) => v > 0.01).length === 5, peaks.map((v) => v.toFixed(2)).join(" "));
   const bassIndex = (await invoke("studio_status")).engine.song.tracks.findIndex((tr) => tr.name === "Bass");
   await clickButton("Silenciar Bass");
-  await sleep(200);
+  await sleep(1500); // meters release over ~300 ms
   peaks = await peakOver(600);
-  check("mute (M) silences only that track", peaks[bassIndex] === 0 && peaks.filter((v) => v > 0.01).length === 4, peaks.map((v) => v.toFixed(2)).join(" "));
+  check("mute (M) silences only that track", peaks[bassIndex] < 0.005 && peaks.filter((v) => v > 0.01).length === 4, peaks.map((v) => v.toFixed(3)).join(" "));
   await shot("03b-studio-playing");
   await clickButton("Silenciar Bass");
 

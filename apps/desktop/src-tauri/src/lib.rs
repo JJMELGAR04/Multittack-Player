@@ -66,6 +66,7 @@ pub fn run() {
             commands::studio::studio_set_track_gain,
             commands::studio::studio_update_track,
             commands::studio::studio_set_song_info,
+            commands::studio::studio_reorder_tracks,
             commands::import::studio_import_inspect,
             commands::import::studio_import_preview,
             commands::import::studio_import_commit,

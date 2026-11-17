@@ -200,7 +200,7 @@ pub struct SongStatus {
     pub analysis: Option<SongAnalysis>,
 }
 
-/// Peak levels (linear) since the previous read.
+/// Peak levels (linear, ~300 ms release); reading does not reset them.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Meters {
@@ -426,7 +426,7 @@ impl Engine {
         self.map(unsafe { ffi::lp_engine_set_output_mode(self.raw.as_ptr(), mode.code()) })
     }
 
-    /// Peak meters since the previous call (resets them).
+    /// Peak meters (~300 ms release; non-destructive read).
     pub fn meters(&self) -> Result<Meters, EngineError> {
         self.check_thread()?;
         let engine = self.raw.as_ptr();

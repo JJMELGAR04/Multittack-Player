@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { SectionRecord } from "@/lib/ipc/types";
 import {
+  moveItem,
   barBeat,
   effectiveGains,
   meterFraction,
@@ -73,6 +74,15 @@ describe("tempo", () => {
     expect(tapTempo([0, 500])).toBeNull();
     // A long pause starts a new measurement.
     expect(tapTempo([0, 500, 1000, 9000, 9600, 10200])).toBe(100);
+  });
+});
+
+describe("track order", () => {
+  it("moves an item up or down", () => {
+    expect(moveItem(["click", "cues", "drums", "bass"], 3, 2)).toEqual(["click", "cues", "bass", "drums"]);
+    expect(moveItem(["a", "b", "c"], 0, 2)).toEqual(["b", "c", "a"]);
+    expect(moveItem(["a", "b", "c"], 2, 0)).toEqual(["c", "a", "b"]);
+    expect(moveItem(["a", "b"], 5, 0)).toEqual(["a", "b"]);
   });
 });
 
