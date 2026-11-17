@@ -56,6 +56,85 @@ static void testDeviceDescription (lp_engine* e)
     CHECK (lp_engine_describe_audio_devices (e, nullptr, 0, nullptr) == LP_ERR_INVALID_ARGUMENT);
 }
 
+static std::string outputInfo (lp_engine* e)
+{
+    size_t required = 0;
+    lp_engine_get_output_info (e, nullptr, 0, &required);
+    std::vector<char> buf (required + 256);
+    CHECK (lp_engine_get_output_info (e, buf.data(), buf.size(), &required) == LP_OK);
+    return std::string (buf.data());
+}
+
+static std::string jsonString (const std::string& json, const std::string& key)
+{
+    const auto k = json.find ("\"" + key + "\":\"");
+    if (k == std::string::npos)
+        return {};
+    const auto start = k + key.size() + 4;
+    std::string out;
+    for (size_t i = start; i < json.size() && json[i] != '"'; ++i)
+    {
+        if (json[i] == '\\' && i + 1 < json.size())
+            ++i;
+        out += json[i];
+    }
+    return out;
+}
+
+static void testDeviceSelection (lp_engine* e)
+{
+    // Unknown driver type: rejected.
+    CHECK (lp_engine_set_audio_device (e, "{\"typeName\":\"Nope\",\"deviceName\":\"X\"}") == LP_ERR_INTERNAL);
+    CHECK (lp_engine_set_audio_device (e, "{\"typeName\":\"Windows Audio\"}") == LP_ERR_INVALID_ARGUMENT);
+    CHECK (lp_engine_set_audio_device (e, nullptr) == LP_ERR_INVALID_ARGUMENT);
+
+    // A device that is not connected is remembered; the default output plays meanwhile.
+    CHECK (lp_engine_set_audio_device (e, "{\"typeName\":\"Windows Audio\",\"deviceName\":\"LIVEPLAYER Missing Interface\",\"sampleRate\":48000}") == LP_OK);
+    auto info = outputInfo (e);
+    std::printf ("missing device -> %s\n", info.c_str());
+    CHECK (info.find ("\"usingPreferred\":false") != std::string::npos);
+    CHECK (info.find ("LIVEPLAYER Missing Interface") != std::string::npos);
+    CHECK (info.find ("\"deviceEvents\":0") == std::string::npos);
+
+    std::vector<char> buf (8192);
+    size_t required = 0;
+    CHECK (lp_engine_describe_device (e, "{\"typeName\":\"Windows Audio\",\"deviceName\":\"LIVEPLAYER Missing Interface\"}", buf.data(), buf.size(), &required) == LP_OK);
+    CHECK (std::string (buf.data()).find ("\"available\":false") != std::string::npos);
+
+    if (info.find ("\"open\":true") == std::string::npos)
+    {
+        std::printf ("no audio output on this machine: skipping the real-device checks\n");
+        return;
+    }
+
+    // The real default device: describe it and choose it explicitly.
+    const auto type = jsonString (info, "typeName"), name = jsonString (info, "deviceName");
+    const std::string req = "{\"typeName\":\"" + type + "\",\"deviceName\":\"" + name + "\"}";
+    CHECK (lp_engine_describe_device (e, req.c_str(), buf.data(), buf.size(), &required) == LP_OK);
+    const std::string caps (buf.data());
+    std::printf ("device caps: %s\n", caps.c_str());
+    CHECK (caps.find ("\"available\":true") != std::string::npos && caps.find ("\"sampleRates\":[") != std::string::npos);
+    CHECK (lp_engine_set_audio_device (e, req.c_str()) == LP_OK);
+    info = outputInfo (e);
+    CHECK (info.find ("\"usingPreferred\":true") != std::string::npos);
+
+    // Bus outputs: must exist; split needs two different ones.
+    CHECK (lp_engine_set_output_channels (e, 0, 60) == LP_ERR_INVALID_ARGUMENT);
+    CHECK (lp_engine_set_output_channels (e, -1, 0) == LP_ERR_INVALID_ARGUMENT);
+    if (lp_engine_set_output_mode (e, LP_OUTPUT_SPLIT) == LP_OK)
+    {
+        CHECK (lp_engine_set_output_channels (e, 1, 0) == LP_OK);
+        CHECK (outputInfo (e).find ("\"mainChannel\":1,\"monitorChannel\":0") != std::string::npos);
+        CHECK (lp_engine_set_output_channels (e, 0, 0) == LP_ERR_INVALID_ARGUMENT);
+        CHECK (lp_engine_set_output_mode (e, LP_OUTPUT_STEREO) == LP_OK);
+    }
+
+    // Test tone: valid output starts (stopped right away: tests stay silent).
+    CHECK (lp_engine_test_tone (e, 99) == LP_ERR_INVALID_ARGUMENT);
+    CHECK (lp_engine_test_tone (e, -2) == LP_ERR_INVALID_ARGUMENT);
+    CHECK (lp_engine_test_tone (e, -1) == LP_OK);
+}
+
 static void testTransportWithoutSong (lp_engine* e)
 {
     // No song loaded: transport calls are rejected cleanly, never crash.
@@ -112,6 +191,8 @@ int main()
         CHECK (std::strcmp (lp_engine_last_error (e), "") == 0);
         if (cycle == 1)
             testTransportWithoutSong (e);
+        if (cycle == 2)
+            testDeviceSelection (e);
         lp_engine_destroy (e);
     }
     lp_engine_destroy (nullptr); // must be a no-op

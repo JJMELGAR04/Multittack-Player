@@ -46,6 +46,20 @@ public:
         mono on output 1, click/cues mono on output 2. Mode 2: instruments on 1/2,
         click/cues on 3/4 (needs 4 outputs; falls back to mode 0 otherwise). */
     void setOutputMode (int mode) { outputMode.store (juce::jlimit (0, 2, mode)); }
+    /** First device output (0-based) of each bus: stereo modes use it and the
+        next one, the split mode only that one. */
+    void setOutputChannels (int mainFirst, int monitorFirst)
+    {
+        mainChannel.store (juce::jmax (0, mainFirst));
+        monitorChannel.store (juce::jmax (0, monitorFirst));
+    }
+    /** Line-check tone (1 kHz, -18 dBFS, 2 s) on one device output; -1 stops it. */
+    void startTestTone (int channel)
+    {
+        toneChannel.store (channel);
+        toneSerial.fetch_add (1);
+    }
+    double getTempoTarget() const noexcept { return tempoTarget.load(); }
     /** Volume of the monitor bus (click / cues), linear. */
     void setMonitorGain (float gain) { monitorGainTarget.store (gain); }
     void setTrackBus (int track, int bus);
@@ -105,6 +119,8 @@ private:
     int renderSubBlock (float* const* outputs, int numOutputs, int offset, int numSamples) noexcept;
 
     void finishFadeOut() noexcept;
+    void processSong (float* const* outputs, int numOutputs, int numSamples) noexcept;
+    void addTestTone (float* const* outputs, int numOutputs, int numSamples) noexcept;
 
     SongPtr song;
     double songSampleRate = 48000.0;
@@ -146,6 +162,12 @@ private:
 
     // Routing (control -> audio).
     std::atomic<int> outputMode { 0 };
+    std::atomic<int> mainChannel { 0 }, monitorChannel { 1 };
+    std::atomic<int> toneChannel { -1 };
+    std::atomic<uint32_t> toneSerial { 0 };
+    uint32_t toneSeen = 0;      // audio thread
+    juce::int64 toneDone = 0;   // samples played of the current tone
+    double tonePhase = 0.0;
     std::atomic<float> monitorGainTarget { 1.0f };
     std::atomic<float> mainTrimTarget { 1.0f }, monitorTrimTarget { 1.0f };
     juce::LinearSmoothedValue<float> mainTrim { 1.0f }, monitorTrim { 1.0f };

@@ -36,9 +36,31 @@ public:
     Engine& operator= (const Engine&) = delete;
 
     juce::String describeAudioDevicesJson();
+    /** Sample rates, buffer sizes and output channel names of one device. */
+    juce::String describeDeviceJson (const juce::String& typeName, const juce::String& deviceName);
 
     bool openDefaultOutput();
     juce::String getOutputInfoJson();
+
+    /** Device the user chose. sampleRate/bufferSize 0 = the device's default. */
+    struct DeviceChoice
+    {
+        juce::String typeName, deviceName;
+        double sampleRate = 0.0;
+        int bufferSize = 0;
+    };
+    /** Opens (and remembers) a device. If it is not connected, the default
+        output is used meanwhile and the choice is reopened when it comes back. */
+    bool setAudioDevice (const DeviceChoice& choice);
+    /** First device output (0-based) of the main and the monitor bus. */
+    bool setOutputChannels (int mainFirst, int monitorFirst);
+    /** 1 kHz line-check tone (-18 dBFS, 2 s) on one device output; -1 stops it. */
+    bool startTestTone (int channel);
+    /** Opens the driver's own settings window (ASIO). */
+    bool showDeviceControlPanel();
+    /** Device housekeeping (lost / reconnected device, sample-rate change).
+        Called from the status getters, i.e. regularly on the control thread. */
+    void maintainDevice();
 
     /** bpmHint > 0: the tempo is known (user); beatsPerBar: bar length for the grid. */
     bool loadSong (std::vector<TrackRequest> tracks, double bpmHint, int beatsPerBar);
@@ -70,12 +92,34 @@ private:
     void harvestAnalysis();
     void startAnalysis (double bpm, double downbeat, int beatsPerBar);
     void updateBusTrims();
+    bool openDevice (const DeviceChoice& choice, juce::String& error);
+    bool deviceListed (const juce::String& typeName, const juce::String& deviceName);
+    void normaliseRouting();
+    void startRateReload();
+    void finishRateReload();
+    void noteDeviceEvent (std::string message);
 
     juce::AudioDeviceManager deviceManager;
     Player player;
     bool callbackAttached = false;
 
+    // Device choice and health.
+    DeviceChoice preferred;
+    bool hasPreferred = false;
+    bool preferredWasListed = true;
+    bool changingDevice = false;
+    juce::String lastTypeName, lastDeviceName;
+    int deviceEvents = 0;
+    std::string lastDeviceEvent;
+    juce::uint32 lastScanMs = 0;
+    int mainFirst = 0, monitorFirst = 1, outputMode = 0;
+
     std::unique_ptr<SongLoader> loader;
+    bool loaderIsReload = false; // re-decoding the same song for a new sample rate
+    std::vector<TrackRequest> songRequests;
+    std::vector<float> trackGains;
+    double reloadPosition = 0.0, reloadTempo = 1.0;
+    bool reloadPlaying = false;
     juce::uint64 nextLoadId = 1;
     juce::uint64 currentLoadId = 0;
     std::string loadState = "idle";

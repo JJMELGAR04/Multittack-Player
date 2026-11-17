@@ -22,5 +22,5 @@ LIVEPLAYER se distribuye bajo **GNU AGPL-3.0-or-later** (texto completo en [`LIC
 | SQLite | Dominio público | Sí | Embebido en el binario. |
 | Visual Studio 2022 Build Tools | Licencia de Microsoft | Sí | Gratuito para desarrolladores individuales y proyectos de código abierto. Solo se necesita para compilar; el usuario final no lo instala. |
 | CMake | BSD-3 | Sí | |
-| ASIO SDK (fase 4) | Licencia de Steinberg / GPLv3 | Sí | Se descarga aparte, nunca se sube al repositorio (`third_party/asio/` está en `.gitignore`). |
+| ASIO SDK 2.3.4 de Steinberg | Doble licencia: propietaria **o GPLv3** (desde octubre de 2025) | Sí | LIVEPLAYER lo usa bajo la **GPLv3**, compatible con nuestra AGPLv3: gratis, sin firmar acuerdos y redistribuible. Se descarga con `node tools/fetch-asio-sdk.mjs` y no se sube al repositorio (`third_party/asio/` está en `.gitignore`). No usamos el logotipo de ASIO. Los **controladores** ASIO los instala cada fabricante de interfaz; no forman parte de LIVEPLAYER. |
 | FFmpeg (fase 3, si se usa) | LGPL (configuración sin componentes GPL) | Sí | Hay que enlazarlo dinámicamente para cumplir la LGPL; algunos códecs (AAC, WMA) tienen consideraciones de patentes que se documentarán en la fase 3. |

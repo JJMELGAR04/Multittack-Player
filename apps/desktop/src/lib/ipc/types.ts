@@ -42,6 +42,35 @@ export interface AudioDeviceType {
 
 export interface AudioDiagnostics {
   deviceTypes: AudioDeviceType[];
+  /** Built with the Steinberg ASIO SDK (Windows). */
+  asioSupported?: boolean;
+}
+
+// ---- Phase 4: audio devices ----------------------------------------------------
+
+/** A device chosen by the user (sampleRate / bufferSize 0 = device default). */
+export interface DeviceChoice {
+  typeName: string;
+  deviceName: string;
+  sampleRate: number;
+  bufferSize: number;
+}
+
+export interface DeviceCapabilities {
+  typeName: string;
+  deviceName: string;
+  available: boolean;
+  sampleRates: number[];
+  bufferSizes: number[];
+  defaultBufferSize: number | null;
+  outputChannelNames: string[];
+  hasControlPanel: boolean;
+}
+
+/** First physical output (0-based) of each bus. */
+export interface OutputChannels {
+  main: number;
+  monitor: number;
 }
 
 export interface DatabaseStatus {
@@ -67,6 +96,26 @@ export interface OutputInfo {
   bufferSize?: number;
   outputChannels?: number;
   outputLatencyMs?: number;
+  // Phase 4
+  outputChannelNames?: string[];
+  sampleRates?: number[];
+  bufferSizes?: number[];
+  hasControlPanel?: boolean;
+  /** Dropouts reported by the driver (-1 = it does not report them). */
+  xruns?: number | null;
+  cpuLoad?: number;
+  /** Dropouts of the engine (render fell behind). */
+  underruns?: number;
+  mainChannel?: number;
+  monitorChannel?: number;
+  outputMode?: number;
+  asioSupported?: boolean;
+  /** The song is being converted to a new sample rate. */
+  reloading?: boolean;
+  deviceEvents?: number;
+  lastDeviceEvent?: string;
+  preferred?: DeviceChoice | null;
+  usingPreferred?: boolean | null;
 }
 
 export interface LoadedTrack {

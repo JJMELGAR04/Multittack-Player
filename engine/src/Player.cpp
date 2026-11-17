@@ -438,9 +438,12 @@ int Player::renderSubBlock (float* const* outputs, int numOutputs, int offset, i
         }
     }
 
-    // 3. Map the buses to the device outputs.
-    auto out = [&] (int c) { return outputs[c] != nullptr ? outputs[c] + offset : nullptr; };
+    // 3. Map the buses to the device outputs chosen by the user
+    //    (outputs that do not exist on the device are skipped).
+    auto out = [&] (int c) { return c >= 0 && c < numOutputs && outputs[c] != nullptr ? outputs[c] + offset : nullptr; };
     const int mode = outputMode.load (std::memory_order_relaxed);
+    const int mainCh = mainChannel.load (std::memory_order_relaxed);
+    const int monCh = monitorChannel.load (std::memory_order_relaxed);
     if (numOutputs == 1)
     {
         if (auto* o = out (0))
@@ -449,29 +452,31 @@ int Player::renderSubBlock (float* const* outputs, int numOutputs, int offset, i
     }
     else if (mode == 2 && numOutputs >= 4)
     {
+        // Instruments in stereo on one pair, click + cues in stereo on another.
         const float* src[4] = { mainL, mainR, monL, monR };
+        const int dst[4] = { mainCh, mainCh + 1, monCh, monCh + 1 };
         for (int c = 0; c < 4; ++c)
-            if (auto* o = out (c))
+            if (auto* o = out (dst[c]))
                 juce::FloatVectorOperations::add (o, src[c], frames);
     }
     else if (mode == 1)
     {
-        // Split: instruments (mono) to output 1, click + cues (mono) to output 2.
-        if (auto* o = out (0))
+        // Split: instruments (mono) to one output, click + cues (mono) to another.
+        if (auto* o = out (mainCh))
             for (int i = 0; i < frames; ++i)
                 o[i] += 0.5f * (mainL[i] + mainR[i]);
-        if (auto* o = out (1))
+        if (auto* o = out (monCh))
             for (int i = 0; i < frames; ++i)
                 o[i] += 0.5f * (monL[i] + monR[i]);
     }
     else
     {
-        if (auto* o = out (0))
+        if (auto* o = out (mainCh))
         {
             juce::FloatVectorOperations::add (o, mainL, frames);
             juce::FloatVectorOperations::add (o, monL, frames);
         }
-        if (auto* o = out (1))
+        if (auto* o = out (mainCh + 1))
         {
             juce::FloatVectorOperations::add (o, mainR, frames);
             juce::FloatVectorOperations::add (o, monR, frames);
@@ -502,6 +507,42 @@ void Player::audioDeviceIOCallbackWithContext (const float* const*, int,
         if (outputChannelData[c] != nullptr)
             juce::FloatVectorOperations::clear (outputChannelData[c], numSamples);
 
+    processSong (outputChannelData, numOutputChannels, numSamples);
+    addTestTone (outputChannelData, numOutputChannels, numSamples);
+}
+
+void Player::addTestTone (float* const* outputs, int numOutputs, int numSamples) noexcept
+{
+    const auto serial = toneSerial.load (std::memory_order_acquire);
+    if (serial != toneSeen)
+    {
+        toneSeen = serial;
+        toneDone = 0;
+        tonePhase = 0.0;
+    }
+    const int ch = toneChannel.load (std::memory_order_relaxed);
+    const auto total = (juce::int64) (2.0 * deviceSampleRate);
+    if (ch < 0 || ch >= numOutputs || outputs[ch] == nullptr || toneDone >= total)
+        return;
+
+    // 1 kHz at -18 dBFS (the usual line-up level), 10 ms fades: no clicks.
+    constexpr float level = 0.1259f;
+    const double inc = juce::MathConstants<double>::twoPi * 1000.0 / deviceSampleRate;
+    const auto fade = (juce::int64) (0.01 * deviceSampleRate);
+    auto* o = outputs[ch];
+    for (int i = 0; i < numSamples && toneDone < total; ++i, ++toneDone)
+    {
+        const auto edge = juce::jmin (toneDone, total - 1 - toneDone);
+        const float env = edge < fade ? (float) edge / (float) fade : 1.0f;
+        o[i] += level * env * (float) std::sin (tonePhase);
+        tonePhase += inc;
+        if (tonePhase > juce::MathConstants<double>::twoPi)
+            tonePhase -= juce::MathConstants<double>::twoPi;
+    }
+}
+
+void Player::processSong (float* const* outputChannelData, int numOutputChannels, int numSamples) noexcept
+{
     if (numTracks == 0 || numOutputChannels == 0 || outputChannelData[0] == nullptr || sampleRateMismatch.load())
         return;
 

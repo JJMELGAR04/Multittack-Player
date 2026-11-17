@@ -4,7 +4,7 @@
 
 | Plataforma | Shell de UI | Audio (vía JUCE) | Estado |
 |---|---|---|---|
-| Windows 10/11 | Tauri 2 (WebView2) | WASAPI; ASIO opcional (fase 4) | **En desarrollo** |
+| Windows 10/11 | Tauri 2 (WebView2) | ASIO; WASAPI compartido, exclusivo y de baja latencia | **En desarrollo** |
 | macOS | Tauri 2 (WKWebView) | CoreAudio | No probado |
 | Android (tablets) | Tauri 2 mobile **o** app nativa | Oboe/AAudio (JUCE) | Por evaluar en la fase 6 |
 | iPadOS | Tauri 2 mobile **o** app nativa | CoreAudio / AVAudioSession (JUCE) | Por evaluar en la fase 6 |

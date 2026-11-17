@@ -59,6 +59,39 @@ pub struct AudioDeviceType {
 #[serde(rename_all = "camelCase")]
 pub struct AudioDiagnostics {
     pub device_types: Vec<AudioDeviceType>,
+    #[serde(default)]
+    pub asio_supported: bool,
+}
+
+/// A device chosen by the user (sample rate / buffer 0 = device default).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceChoice {
+    pub type_name: String,
+    pub device_name: String,
+    #[serde(default)]
+    pub sample_rate: f64,
+    #[serde(default)]
+    pub buffer_size: i64,
+}
+
+/// What one device can do.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceCapabilities {
+    pub type_name: String,
+    pub device_name: String,
+    pub available: bool,
+    #[serde(default)]
+    pub sample_rates: Vec<f64>,
+    #[serde(default)]
+    pub buffer_sizes: Vec<i64>,
+    #[serde(default)]
+    pub default_buffer_size: Option<i64>,
+    #[serde(default)]
+    pub output_channel_names: Vec<String>,
+    #[serde(default)]
+    pub has_control_panel: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -75,6 +108,43 @@ pub struct OutputInfo {
     pub buffer_size: Option<i64>,
     #[serde(default)]
     pub output_latency_ms: Option<f64>,
+    #[serde(default)]
+    pub output_channels: Option<i64>,
+    #[serde(default)]
+    pub output_channel_names: Vec<String>,
+    #[serde(default)]
+    pub sample_rates: Vec<f64>,
+    #[serde(default)]
+    pub buffer_sizes: Vec<i64>,
+    #[serde(default)]
+    pub has_control_panel: bool,
+    /// Driver-reported dropouts (-1 = the driver does not report them).
+    #[serde(default)]
+    pub xruns: Option<i64>,
+    #[serde(default)]
+    pub cpu_load: f64,
+    /// Engine-side dropouts (the render thread fell behind).
+    #[serde(default)]
+    pub underruns: i64,
+    #[serde(default)]
+    pub main_channel: i64,
+    #[serde(default)]
+    pub monitor_channel: i64,
+    #[serde(default)]
+    pub output_mode: i64,
+    #[serde(default)]
+    pub asio_supported: bool,
+    /// The song is being re-decoded for a new sample rate.
+    #[serde(default)]
+    pub reloading: bool,
+    #[serde(default)]
+    pub device_events: i64,
+    #[serde(default)]
+    pub last_device_event: String,
+    #[serde(default)]
+    pub preferred: Option<DeviceChoice>,
+    #[serde(default)]
+    pub using_preferred: Option<bool>,
 }
 
 /// One file of a song to load.
@@ -315,16 +385,24 @@ impl Engine {
 
     /// Calls a two-call-pattern JSON function and deserializes the result.
     fn json<T: for<'de> Deserialize<'de>>(&self, f: ffi::JsonFn) -> Result<T, EngineError> {
+        // SAFETY: `f` is an engine JSON function; arguments come from json_with.
+        self.json_with(|e, b, c, r| unsafe { f(e, b, c, r) })
+    }
+
+    fn json_with<T: for<'de> Deserialize<'de>>(
+        &self,
+        mut f: impl FnMut(*mut ffi::lp_engine, *mut std::ffi::c_char, usize, *mut usize) -> ffi::lp_result,
+    ) -> Result<T, EngineError> {
         self.check_thread()?;
         let engine = self.raw.as_ptr();
         // The content can change between the two calls; retry if it grew.
         for _ in 0..3 {
             let mut required = 0usize;
             // SAFETY: size query with NULL buffer and zero capacity.
-            self.map(unsafe { f(engine, std::ptr::null_mut(), 0, &mut required) })?;
+            self.map(f(engine, std::ptr::null_mut(), 0, &mut required))?;
             let mut buf = vec![0u8; required + 256];
             // SAFETY: `buf` has `buf.len()` writable bytes.
-            let code = unsafe { f(engine, buf.as_mut_ptr().cast(), buf.len(), &mut required) };
+            let code = f(engine, buf.as_mut_ptr().cast(), buf.len(), &mut required);
             if code == ffi::LP_ERR_BUFFER_TOO_SMALL {
                 continue;
             }
@@ -359,8 +437,48 @@ impl Engine {
         self.map(unsafe { ffi::lp_engine_open_default_output(self.raw.as_ptr()) })
     }
 
+    /// Output device status. Also does the device housekeeping (lost /
+    /// reconnected device), so it should be polled regularly.
     pub fn output_info(&self) -> Result<OutputInfo, EngineError> {
         self.json(ffi::lp_engine_get_output_info)
+    }
+
+    /// Sample rates, buffer sizes and outputs of one device.
+    pub fn describe_device(&self, type_name: &str, device_name: &str) -> Result<DeviceCapabilities, EngineError> {
+        let req = serde_json::json!({ "typeName": type_name, "deviceName": device_name }).to_string();
+        let c = CString::new(req).map_err(|_| EngineError::InvalidArgument(": nombre con carácter NUL".into()))?;
+        // SAFETY: valid NUL-terminated request; buffer arguments come from json_with.
+        self.json_with(|e, b, cap, r| unsafe { ffi::lp_engine_describe_device(e, c.as_ptr(), b, cap, r) })
+    }
+
+    /// Opens and remembers a device (default output meanwhile if not connected).
+    pub fn set_audio_device(&self, choice: &DeviceChoice) -> Result<(), EngineError> {
+        self.check_thread()?;
+        let req = serde_json::to_string(choice).map_err(|e| EngineError::InvalidArgument(format!(": {e}")))?;
+        let c = CString::new(req).map_err(|_| EngineError::InvalidArgument(": nombre con carácter NUL".into()))?;
+        // SAFETY: valid engine pointer and NUL-terminated string; owning thread.
+        self.map(unsafe { ffi::lp_engine_set_audio_device(self.raw.as_ptr(), c.as_ptr()) })
+    }
+
+    /// First device output (0-based) of the main and the monitor bus.
+    pub fn set_output_channels(&self, main_first: i32, monitor_first: i32) -> Result<(), EngineError> {
+        self.check_thread()?;
+        // SAFETY: valid engine pointer; owning thread.
+        self.map(unsafe { ffi::lp_engine_set_output_channels(self.raw.as_ptr(), main_first, monitor_first) })
+    }
+
+    /// 1 kHz / -18 dBFS / 2 s tone on one output (0-based); -1 stops it.
+    pub fn test_tone(&self, channel: i32) -> Result<(), EngineError> {
+        self.check_thread()?;
+        // SAFETY: valid engine pointer; owning thread.
+        self.map(unsafe { ffi::lp_engine_test_tone(self.raw.as_ptr(), channel) })
+    }
+
+    /// Driver control panel (ASIO).
+    pub fn show_device_panel(&self) -> Result<(), EngineError> {
+        self.check_thread()?;
+        // SAFETY: valid engine pointer; owning thread.
+        self.map(unsafe { ffi::lp_engine_show_device_panel(self.raw.as_ptr()) })
     }
 
     /// Starts loading a song in the background; poll [`Engine::song_status`].
@@ -552,6 +670,7 @@ mod tests {
         refuses_foreign_thread();
         transport_requires_song();
         load_and_play_test_song();
+        remembers_a_device_that_is_not_connected();
     }
 
     fn ping_round_trip_and_lifecycle() {
@@ -593,6 +712,34 @@ mod tests {
 
     fn test_audio_dir() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test-audio/short")
+    }
+
+    fn remembers_a_device_that_is_not_connected() {
+        let engine = Engine::new().expect("engine");
+        if engine.open_default_output().is_err() {
+            eprintln!("SKIP remembers_a_device_that_is_not_connected: no audio output");
+            return;
+        }
+        let choice = DeviceChoice {
+            type_name: "Windows Audio".into(),
+            device_name: "LIVEPLAYER Missing Interface".into(),
+            sample_rate: 48000.0,
+            buffer_size: 0,
+        };
+        if engine.audio_diagnostics().map(|d| d.device_types.iter().all(|t| t.name != choice.type_name)).unwrap_or(true) {
+            eprintln!("SKIP: no WASAPI on this machine");
+            return;
+        }
+        engine.set_audio_device(&choice).expect("remembered");
+        let info = engine.output_info().expect("info");
+        assert!(info.open, "the default output keeps playing");
+        assert_eq!(info.using_preferred, Some(false));
+        assert_eq!(info.preferred.as_ref().map(|p| p.device_name.as_str()), Some("LIVEPLAYER Missing Interface"));
+        assert!(info.device_events >= 1 && !info.last_device_event.is_empty());
+        let caps = engine.describe_device(&choice.type_name, &choice.device_name).expect("caps");
+        assert!(!caps.available);
+        assert!(engine.set_output_channels(0, 99).is_err());
+        assert!(engine.test_tone(99).is_err());
     }
 
     fn load_and_play_test_song() {

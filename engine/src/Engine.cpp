@@ -2,6 +2,24 @@
 
 #include <cmath>
 
+namespace
+{
+constexpr int maxOutputChannels = 32;
+
+juce::String toJson (const juce::var& v)
+{
+    return juce::JSON::toString (v, juce::JSON::FormatOptions{}.withSpacing (juce::JSON::Spacing::none));
+}
+
+juce::var toVarArray (const juce::StringArray& items)
+{
+    juce::Array<juce::var> a;
+    for (const auto& s : items)
+        a.add (s);
+    return a;
+}
+} // namespace
+
 namespace liveplayer
 {
 
@@ -110,16 +128,338 @@ juce::String Engine::describeAudioDevicesJson()
 
     auto* root = new juce::DynamicObject();
     root->setProperty ("deviceTypes", types);
-    return juce::JSON::toString (juce::var (root), juce::JSON::FormatOptions{}.withSpacing (juce::JSON::Spacing::none));
+    root->setProperty ("asioSupported", LIVEPLAYER_WITH_ASIO != 0);
+    return toJson (juce::var (root));
 }
+
+juce::String Engine::describeDeviceJson (const juce::String& typeName, const juce::String& deviceName)
+{
+    auto* root = new juce::DynamicObject();
+    root->setProperty ("typeName", typeName);
+    root->setProperty ("deviceName", deviceName);
+
+    auto describe = [&] (juce::AudioIODevice& d) {
+        juce::Array<juce::var> rates, sizes;
+        for (auto r : d.getAvailableSampleRates())
+            rates.add (r);
+        for (auto b : d.getAvailableBufferSizes())
+            sizes.add (b);
+        root->setProperty ("available", true);
+        root->setProperty ("sampleRates", rates);
+        root->setProperty ("bufferSizes", sizes);
+        root->setProperty ("defaultBufferSize", d.getDefaultBufferSize());
+        root->setProperty ("outputChannelNames", toVarArray (d.getOutputChannelNames()));
+        root->setProperty ("hasControlPanel", d.hasControlPanel());
+    };
+
+    // The open device is described directly (an ASIO driver can only be loaded once).
+    auto* current = deviceManager.getCurrentAudioDevice();
+    if (current != nullptr && current->getTypeName() == typeName && current->getName() == deviceName)
+    {
+        describe (*current);
+        return toJson (juce::var (root));
+    }
+
+    root->setProperty ("available", false);
+    for (auto* type : deviceManager.getAvailableDeviceTypes())
+    {
+        if (type->getTypeName() != typeName)
+            continue;
+        type->scanForDevices();
+        if (! type->getDeviceNames (false).contains (deviceName))
+            break;
+        std::unique_ptr<juce::AudioIODevice> device (type->createDevice (deviceName, {}));
+        if (device != nullptr)
+            describe (*device);
+        break;
+    }
+    return toJson (juce::var (root));
+}
+
+bool Engine::deviceListed (const juce::String& typeName, const juce::String& deviceName)
+{
+    for (auto* type : deviceManager.getAvailableDeviceTypes())
+        if (type->getTypeName() == typeName)
+        {
+            type->scanForDevices();
+            return type->getDeviceNames (false).contains (deviceName);
+        }
+    return false;
+}
+
+bool Engine::openDevice (const DeviceChoice& choice, juce::String& error)
+{
+    const juce::ScopedValueSetter<bool> busy (changingDevice, true);
+    deviceManager.setCurrentAudioDeviceType (choice.typeName, true);
+    auto setup = deviceManager.getAudioDeviceSetup();
+    setup.outputDeviceName = choice.deviceName;
+    setup.inputDeviceName = {};
+    setup.sampleRate = choice.sampleRate;
+    setup.bufferSize = choice.bufferSize;
+    setup.useDefaultInputChannels = false;
+    setup.inputChannels.clear();
+    setup.useDefaultOutputChannels = false;
+    setup.outputChannels.clear();
+    setup.outputChannels.setRange (0, maxOutputChannels, true); // every output the device has
+    error = deviceManager.setAudioDeviceSetup (setup, true);
+    if (error.isEmpty() && deviceManager.getCurrentAudioDevice() == nullptr)
+        error = "el dispositivo no se pudo abrir";
+    if (error.isEmpty() && ! callbackAttached)
+    {
+        deviceManager.addAudioCallback (&player);
+        callbackAttached = true;
+    }
+    return error.isEmpty();
+}
+
+bool Engine::setAudioDevice (const DeviceChoice& choice)
+{
+    if (choice.typeName.isEmpty() || choice.deviceName.isEmpty())
+    {
+        setLastError ("Elige un tipo de controlador y un dispositivo.");
+        return false;
+    }
+    bool knownType = false;
+    for (auto* type : deviceManager.getAvailableDeviceTypes())
+        knownType = knownType || type->getTypeName() == choice.typeName;
+    if (! knownType)
+    {
+        setLastError ("El tipo de controlador \xc2\xab" + choice.typeName.toStdString() + "\xc2\xbb no está disponible en este equipo.");
+        return false;
+    }
+
+    // Remembered even when not connected: it is reopened when it appears.
+    preferred = choice;
+    hasPreferred = true;
+    preferredWasListed = deviceListed (choice.typeName, choice.deviceName);
+    if (! preferredWasListed)
+    {
+        noteDeviceEvent ("\xc2\xab" + choice.deviceName.toStdString() + "\xc2\xbb no está conectado: se usa la salida por defecto hasta que se conecte.");
+        if (deviceManager.getCurrentAudioDevice() == nullptr)
+            openDefaultOutput();
+        auto* d = deviceManager.getCurrentAudioDevice();
+        lastTypeName = d != nullptr ? d->getTypeName() : juce::String();
+        lastDeviceName = d != nullptr ? d->getName() : juce::String();
+        normaliseRouting();
+        return true;
+    }
+
+    // Keep what was playing, in case the new device refuses to open.
+    auto* previous = deviceManager.getCurrentAudioDevice();
+    DeviceChoice before;
+    if (previous != nullptr)
+    {
+        before.typeName = previous->getTypeName();
+        before.deviceName = previous->getName();
+        before.sampleRate = previous->getCurrentSampleRate();
+        before.bufferSize = previous->getCurrentBufferSizeSamples();
+    }
+
+    juce::String error;
+    if (! openDevice (choice, error))
+    {
+        juce::String ignored;
+        if (before.deviceName.isNotEmpty())
+            openDevice (before, ignored);
+        else
+            openDefaultOutput();
+        setLastError ("No se pudo abrir \xc2\xab" + choice.deviceName.toStdString() + "\xc2\xbb: " + error.toStdString());
+        if (auto* d = deviceManager.getCurrentAudioDevice())
+        {
+            lastTypeName = d->getTypeName();
+            lastDeviceName = d->getName();
+        }
+        return false;
+    }
+
+    auto* d = deviceManager.getCurrentAudioDevice();
+    lastTypeName = d->getTypeName();
+    lastDeviceName = d->getName();
+    normaliseRouting();
+    maintainDevice(); // sample-rate change -> re-decode the song
+    return true;
+}
+
+void Engine::normaliseRouting()
+{
+    // Keeps the bus outputs inside the device; falls back to the usual layout.
+    const int n = juce::jmax (1, player.getOutputChannels());
+    auto fits = [&] (int mode, int m, int s) {
+        if (mode == 0)
+            return m + 1 < n || (n == 1 && m == 0);
+        if (mode == 1)
+            return m < n && s < n && m != s;
+        return m + 1 < n && s + 1 < n && (m + 1 < s || s + 1 < m);
+    };
+    if (! fits (outputMode, mainFirst, monitorFirst))
+    {
+        mainFirst = 0;
+        monitorFirst = outputMode == 2 ? 2 : 1;
+        if (! fits (outputMode, mainFirst, monitorFirst))
+        {
+            outputMode = 0;
+            monitorFirst = 1;
+            player.setOutputMode (0);
+        }
+    }
+    player.setOutputChannels (mainFirst, monitorFirst);
+}
+
+bool Engine::setOutputChannels (int mainCh, int monitorCh)
+{
+    const int n = juce::jmax (1, player.getOutputChannels());
+    if (mainCh < 0 || monitorCh < 0 || mainCh >= n || monitorCh >= n)
+    {
+        setLastError ("La salida elegida no existe: este dispositivo tiene " + std::to_string (n) + " salidas.");
+        return false;
+    }
+    if (outputMode == 1 && mainCh == monitorCh)
+    {
+        setLastError ("La banda y el click deben ir por salidas distintas.");
+        return false;
+    }
+    if (outputMode == 2 && (mainCh + 1 >= n || monitorCh + 1 >= n || ! (mainCh + 1 < monitorCh || monitorCh + 1 < mainCh)))
+    {
+        setLastError ("En el modo de 4 canales cada bus necesita un par de salidas propio.");
+        return false;
+    }
+    if (outputMode == 0 && n > 1 && mainCh + 1 >= n)
+    {
+        setLastError ("En estéreo se usan dos salidas seguidas: elige una que tenga otra a su derecha.");
+        return false;
+    }
+    mainFirst = mainCh;
+    monitorFirst = monitorCh;
+    player.setOutputChannels (mainFirst, monitorFirst);
+    return true;
+}
+
+bool Engine::startTestTone (int channel)
+{
+    if (! openDefaultOutput())
+        return false;
+    if (channel >= player.getOutputChannels())
+    {
+        setLastError ("La salida " + std::to_string (channel + 1) + " no existe en este dispositivo.");
+        return false;
+    }
+    player.startTestTone (channel);
+    return true;
+}
+
+bool Engine::showDeviceControlPanel()
+{
+    auto* d = deviceManager.getCurrentAudioDevice();
+    if (d == nullptr || ! d->hasControlPanel())
+    {
+        setLastError ("Este dispositivo no tiene panel de control propio.");
+        return false;
+    }
+    const juce::ScopedValueSetter<bool> busy (changingDevice, true);
+    if (d->showControlPanel())
+    {
+        // The driver changed its settings (e.g. ASIO buffer): reopen it.
+        juce::String error;
+        DeviceChoice c { d->getTypeName(), d->getName(), d->getCurrentSampleRate(), 0 };
+        openDevice (c, error);
+    }
+    return true;
+}
+
+void Engine::noteDeviceEvent (std::string message)
+{
+    ++deviceEvents;
+    lastDeviceEvent = std::move (message);
+}
+
+void Engine::maintainDevice()
+{
+    auto* d = deviceManager.getCurrentAudioDevice();
+    const juce::String type = d != nullptr ? d->getTypeName() : juce::String();
+    const juce::String name = d != nullptr ? d->getName() : juce::String();
+
+    // An output change we did not ask for = the device was lost (unplugged,
+    // taken by another app, driver reset). JUCE falls back to the default one.
+    if (! changingDevice && lastDeviceName.isNotEmpty() && (type != lastTypeName || name != lastDeviceName))
+    {
+        noteDeviceEvent (d != nullptr
+                             ? "Se perdió \xc2\xab" + lastDeviceName.toStdString() + "\xc2\xbb. Sonando por \xc2\xab" + name.toStdString() + "\xc2\xbb."
+                             : "Se perdió \xc2\xab" + lastDeviceName.toStdString() + "\xc2\xbb. No hay salida de audio.");
+        normaliseRouting();
+    }
+    lastTypeName = type;
+    lastDeviceName = name;
+
+    const auto now = juce::Time::getMillisecondCounter();
+    if (now - lastScanMs >= 1500)
+    {
+        lastScanMs = now;
+
+        // The open device vanished and nobody closed it: fall back ourselves.
+        if (d != nullptr && ! deviceListed (type, name))
+        {
+            const juce::ScopedValueSetter<bool> busy (changingDevice, true);
+            deviceManager.closeAudioDevice();
+            noteDeviceEvent ("Se perdió \xc2\xab" + name.toStdString() + "\xc2\xbb.");
+            d = nullptr;
+        }
+
+        if (hasPreferred && ! (type == preferred.typeName && name == preferred.deviceName))
+        {
+            const bool listed = deviceListed (preferred.typeName, preferred.deviceName);
+            if (listed && ! preferredWasListed)
+            {
+                juce::String error;
+                if (openDevice (preferred, error))
+                {
+                    noteDeviceEvent ("Se reconectó \xc2\xab" + preferred.deviceName.toStdString() + "\xc2\xbb.");
+                    normaliseRouting();
+                }
+            }
+            preferredWasListed = listed;
+        }
+
+        if (deviceManager.getCurrentAudioDevice() == nullptr)
+        {
+            const juce::ScopedValueSetter<bool> busy (changingDevice, true);
+            if (openDefaultOutput())
+                normaliseRouting();
+        }
+        d = deviceManager.getCurrentAudioDevice();
+        lastTypeName = d != nullptr ? d->getTypeName() : juce::String();
+        lastDeviceName = d != nullptr ? d->getName() : juce::String();
+    }
+
+    // New sample rate: the song is decoded again at that rate (the position,
+    // tempo, mix and detected parts are kept).
+    if (song != nullptr && loader == nullptr && d != nullptr && std::abs (d->getCurrentSampleRate() - song->sampleRate) > 0.5)
+        startRateReload();
+}
+
+void Engine::startRateReload()
+{
+    const auto snap = player.snapshot();
+    reloadPosition = snap.positionSec;
+    reloadPlaying = snap.playState == 1;
+    reloadTempo = player.getTempoTarget();
+    for (size_t i = 0; i < songRequests.size() && i < trackRoles.size(); ++i)
+    {
+        songRequests[i].role = trackRoles[i];
+        songRequests[i].bus = trackBuses[i];
+    }
+    loaderIsReload = true;
+    loader = std::make_unique<SongLoader> (songRequests, deviceManager.getCurrentAudioDevice()->getCurrentSampleRate(), currentLoadId);
+    loader->startThread();
+}
+
 
 bool Engine::openDefaultOutput()
 {
     if (deviceManager.getCurrentAudioDevice() != nullptr)
         return true;
 
-    // Up to 4 outputs: 1/2 instruments, 3/4 click + cues (when the device has them).
-    const auto err = deviceManager.initialiseWithDefaultDevices (0, 4);
+    // Every output of the device (the user picks which ones the buses use).
+    const auto err = deviceManager.initialiseWithDefaultDevices (0, maxOutputChannels);
     if (err.isNotEmpty() || deviceManager.getCurrentAudioDevice() == nullptr)
     {
         setLastError ("No se pudo abrir la salida de audio: "
@@ -137,6 +477,7 @@ bool Engine::openDefaultOutput()
 
 juce::String Engine::getOutputInfoJson()
 {
+    maintainDevice();
     auto* root = new juce::DynamicObject();
     auto* device = deviceManager.getCurrentAudioDevice();
     root->setProperty ("open", device != nullptr);
@@ -150,8 +491,37 @@ juce::String Engine::getOutputInfoJson()
         root->setProperty ("outputChannels", device->getActiveOutputChannels().countNumberOfSetBits());
         root->setProperty ("outputLatencyMs",
                            rate > 0 ? 1000.0 * (device->getOutputLatencyInSamples() + device->getCurrentBufferSizeSamples()) / rate : 0.0);
+        root->setProperty ("outputChannelNames", toVarArray (device->getOutputChannelNames()));
+        juce::Array<juce::var> rates, sizes;
+        for (auto r : device->getAvailableSampleRates())
+            rates.add (r);
+        for (auto b : device->getAvailableBufferSizes())
+            sizes.add (b);
+        root->setProperty ("sampleRates", rates);
+        root->setProperty ("bufferSizes", sizes);
+        root->setProperty ("hasControlPanel", device->hasControlPanel());
+        root->setProperty ("xruns", device->getXRunCount());
     }
-    return juce::JSON::toString (juce::var (root), juce::JSON::FormatOptions{}.withSpacing (juce::JSON::Spacing::none));
+    root->setProperty ("cpuLoad", deviceManager.getCpuUsage());
+    root->setProperty ("underruns", (juce::int64) player.snapshot().underruns);
+    root->setProperty ("mainChannel", mainFirst);
+    root->setProperty ("monitorChannel", monitorFirst);
+    root->setProperty ("outputMode", outputMode);
+    root->setProperty ("asioSupported", LIVEPLAYER_WITH_ASIO != 0);
+    root->setProperty ("reloading", loader != nullptr && loaderIsReload);
+    root->setProperty ("deviceEvents", deviceEvents);
+    root->setProperty ("lastDeviceEvent", juce::String::fromUTF8 (lastDeviceEvent.c_str()));
+    if (hasPreferred)
+    {
+        auto* p = new juce::DynamicObject();
+        p->setProperty ("typeName", preferred.typeName);
+        p->setProperty ("deviceName", preferred.deviceName);
+        p->setProperty ("sampleRate", preferred.sampleRate);
+        p->setProperty ("bufferSize", preferred.bufferSize);
+        root->setProperty ("preferred", juce::var (p));
+        root->setProperty ("usingPreferred", device != nullptr && device->getTypeName() == preferred.typeName && device->getName() == preferred.deviceName);
+    }
+    return toJson (juce::var (root));
 }
 
 bool Engine::loadSong (std::vector<TrackRequest> tracks, double bpm, int beats)
@@ -165,6 +535,8 @@ bool Engine::loadSong (std::vector<TrackRequest> tracks, double bpm, int beats)
         return false;
 
     loader.reset(); // cancels a load in progress
+    loaderIsReload = false;
+    songRequests = tracks;
     pendingBpmHint = bpm > 0.0 ? bpm : 0.0;
     pendingBeatsPerBar = juce::jlimit (1, 16, beats);
     currentLoadId = nextLoadId++;
@@ -186,6 +558,14 @@ void Engine::harvestLoader()
             return;
 
         case SongLoader::Phase::failed:
+            if (loaderIsReload)
+            {
+                // The song stays installed (silent until the rate matches again).
+                setLastError ("No se pudo adaptar la canción a la nueva frecuencia: " + loader->getError());
+                loaderIsReload = false;
+                loader.reset();
+                return;
+            }
             loadState = "error";
             loadError = loader->getError();
             loader.reset();
@@ -193,6 +573,11 @@ void Engine::harvestLoader()
 
         case SongLoader::Phase::ready:
         {
+            if (loaderIsReload)
+            {
+                finishRateReload();
+                return;
+            }
             analysis.reset();
             auto newSong = loader->getSong();
             trackPeaks = loader->takeTrackPeaks();
@@ -217,6 +602,7 @@ void Engine::harvestLoader()
                 trackBuses.push_back (t.bus);
             }
             mixPeaksDirty = false;
+            trackGains.assign (song->tracks.size(), 1.0f);
             updateBusTrims();
             bpmHint = pendingBpmHint;
             beatsPerBar = pendingBeatsPerBar;
@@ -318,6 +704,7 @@ bool Engine::setTrackGain (int track, float gain)
         return false;
     }
     player.setTrackGain (track, gain);
+    trackGains[(size_t) track] = gain;
     return true;
 }
 
@@ -329,12 +716,47 @@ bool Engine::setOutputMode (int mode)
                       + " canales: el modo de 4 canales necesita una interfaz con 4 salidas o más.");
         return false;
     }
-    player.setOutputMode (mode);
+    if (mode == 1 && player.getOutputChannels() < 2)
+    {
+        setLastError ("El modo dividido necesita al menos 2 salidas.");
+        return false;
+    }
+    outputMode = juce::jlimit (0, 2, mode);
+    player.setOutputMode (outputMode);
+    normaliseRouting();
     return true;
+}
+
+void Engine::finishRateReload()
+{
+    auto newSong = loader->getSong();
+    trackPeaks = loader->takeTrackPeaks();
+    mixPeaks = loader->takeMixPeaks();
+    loader.reset();
+    loaderIsReload = false;
+
+    if (callbackAttached)
+        deviceManager.removeAudioCallback (&player);
+    player.setSong (newSong);
+    for (size_t t = 0; t < trackBuses.size(); ++t)
+        player.setTrackBus ((int) t, trackBuses[t]);
+    for (size_t t = 0; t < trackGains.size(); ++t)
+        player.setTrackGain ((int) t, trackGains[t]);
+    player.setTempoRatio (reloadTempo);
+    if (callbackAttached)
+        deviceManager.addAudioCallback (&player);
+
+    song = std::move (newSong);
+    mixPeaksDirty = true;
+    updateBusTrims();
+    player.seek (reloadPosition);
+    if (reloadPlaying)
+        player.play();
 }
 
 juce::String Engine::getSongStatusJson()
 {
+    maintainDevice();
     harvestLoader();
     harvestAnalysis();
 

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(liveplayer_engine
-    VERSION 0.3.0
+    VERSION 0.4.0
     DESCRIPTION "LIVEPLAYER native real-time audio engine"
     LANGUAGES C CXX)
 
@@ -63,6 +63,23 @@ liveplayer_dependency(signalsmith_stretch signalsmith-stretch https://github.com
 liveplayer_dependency(r8brain             r8brain             https://github.com/avaneev/r8brain-free-src.git              version-6.5)
 
 # ---------------------------------------------------------------------------
+# ASIO (Windows, optional): Steinberg ASIO SDK 2.3.4+, used under its GPLv3
+# option (compatible with our AGPLv3). Fetched with tools/fetch-asio-sdk.mjs
+# into third_party/asio/ASIOSDK (never committed). Without it, WASAPI only.
+# ---------------------------------------------------------------------------
+set(LIVEPLAYER_ASIO_SDK_DIR "" CACHE PATH "Steinberg ASIO SDK folder (contains common/iasiodrv.h)")
+if(NOT LIVEPLAYER_ASIO_SDK_DIR AND EXISTS "${THIRD_PARTY_DIR}/asio/ASIOSDK/common/iasiodrv.h")
+    set(LIVEPLAYER_ASIO_SDK_DIR "${THIRD_PARTY_DIR}/asio/ASIOSDK")
+endif()
+if(WIN32 AND LIVEPLAYER_ASIO_SDK_DIR AND EXISTS "${LIVEPLAYER_ASIO_SDK_DIR}/common/iasiodrv.h")
+    set(LIVEPLAYER_WITH_ASIO 1)
+    message(STATUS "LIVEPLAYER: ASIO enabled (${LIVEPLAYER_ASIO_SDK_DIR})")
+else()
+    set(LIVEPLAYER_WITH_ASIO 0)
+    message(STATUS "LIVEPLAYER: ASIO disabled (run: node tools/fetch-asio-sdk.mjs)")
+endif()
+
+# ---------------------------------------------------------------------------
 # Engine static library. Public surface = include/liveplayer_engine.h (C ABI).
 # ---------------------------------------------------------------------------
 add_library(liveplayer_engine STATIC
@@ -90,6 +107,9 @@ target_include_directories(liveplayer_engine SYSTEM PRIVATE
     ${signalsmith_stretch_SOURCE_DIR}/include
     ${signalsmith_linear_SOURCE_DIR}/include
     ${r8brain_SOURCE_DIR})
+if(LIVEPLAYER_WITH_ASIO)
+    target_include_directories(liveplayer_engine SYSTEM PRIVATE "${LIVEPLAYER_ASIO_SDK_DIR}/common")
+endif()
 
 target_compile_definitions(liveplayer_engine
     PUBLIC
@@ -103,11 +123,11 @@ target_compile_definitions(liveplayer_engine
         JUCE_WEB_BROWSER=0
         JUCE_MODAL_LOOPS_PERMITTED=0
         JUCE_STRICT_REFCOUNTEDPOINTER=1
-        # Platform audio back-ends. ASIO is evaluated in phase 4 (needs the
-        # Steinberg SDK, which is downloaded separately and never committed).
+        # Platform audio back-ends (ASIO only when the SDK is present, see above).
         JUCE_WASAPI=1
-        JUCE_DIRECTSOUND=1
-        JUCE_ASIO=0
+        JUCE_DIRECTSOUND=0
+        JUCE_ASIO=${LIVEPLAYER_WITH_ASIO}
+        LIVEPLAYER_WITH_ASIO=${LIVEPLAYER_WITH_ASIO}
         JUCE_JACK=0
         JUCE_USE_FLAC=1
         JUCE_USE_OGGVORBIS=1

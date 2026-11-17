@@ -26,6 +26,7 @@ const app = spawn(exe, [], {
 });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let exitCode = 1;
+let failureShot = null; // screenshot of the screen when a step fails
 
 try {
   let target;
@@ -58,6 +59,7 @@ try {
     const r = await send("Page.captureScreenshot", { format: "png" });
     writeFileSync(`${outDir}/${name}.png`, Buffer.from(r.result.data, "base64"));
   };
+  failureShot = () => shot("zz-failure");
 
   const checks = [];
   const check = (name, ok, detail = "") => { checks.push({ name, ok: !!ok, detail }); };
@@ -67,7 +69,7 @@ try {
   const text = await evaluate("document.body.innerText");
   check("isTauri() true (no 'fuera de la aplicación' banner)", !text.includes("fuera de la aplicación de escritorio"));
   check("engine_info: JUCE 9.0.5", text.includes("9.0.5"));
-  check("engine_info: ABI v4", text.includes("v4"));
+  check("engine_info: ABI v5", text.includes("v5"));
   check("audio_diagnostics: Windows Audio listed", text.includes("Windows Audio"));
   check("database_status: songs tables (schema 2)", text.includes("songs") && text.includes("song_sections"));
   check("app_info: windows", text.includes("windows"));
@@ -309,7 +311,7 @@ try {
   await evaluate(`(() => { const i = document.querySelector("[aria-label='Buscar canción']"); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(i, ""); i.dispatchEvent(new Event("input", { bubbles: true })); })()`);
   await sleep(150);
   await clickButton("Renombrar Prueba");
-  await sleep(100);
+  await waitFor(`!!document.querySelector("[aria-label='Nuevo título de Prueba']")`, "rename field");
   await evaluate(`(() => {
     const i = document.querySelector("[aria-label='Nuevo título de Prueba']");
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(i, "Prueba renombrada");
@@ -338,6 +340,91 @@ try {
   await sleep(300);
   check("delete removes the song and its extracted files (zip kept)", extracted.every((f) => !existsSync(f)) && existsSync(songZip), extracted[0]);
   check("files picked by the user are never deleted", existsSync(join(songFolder, "Bass.wav")));
+
+  // ---- Phase 4: audio device and outputs ----
+  const out0 = await invoke("output_info");
+  check("output device open at start-up with all its outputs", out0.open && out0.outputChannels >= 2 && out0.outputChannelNames?.length === out0.outputChannels, `${out0.typeName} · ${out0.deviceName} · ${out0.outputChannels} outputs`);
+  const diag = await invoke("audio_diagnostics");
+  check("ASIO compiled in (Steinberg SDK, GPLv3) and listed as a driver type", diag.asioSupported === true && diag.deviceTypes.some((t) => t.name === "ASIO"), diag.deviceTypes.map((t) => `${t.name} (${t.outputDevices.length})`).join(", "));
+
+  await evaluate(`location.hash = "#/audio-settings"`);
+  await waitFor(`!!document.querySelector("[data-audio-current]") && document.querySelector("[data-audio-current]").innerText.includes(${JSON.stringify(out0.deviceName)})`, "audio settings");
+  const drivers = await evaluate(`[...document.querySelector("[aria-label=Controlador]").options].map(o => o.textContent).join(" | ")`);
+  check("Audio Settings lists the drivers (ASIO first)", drivers.startsWith("ASIO") && drivers.includes("Windows · exclusivo") && drivers.includes("Windows · compartido"), drivers);
+
+  // Live mode with 2 outputs: band on one, click on the other; pick the other way round.
+  await clickButton("x"); // no-op, keeps helper warm
+  await evaluate(`[...document.querySelectorAll("[role=radio]")].find(b => b.textContent.includes("En vivo · 2 salidas")).click()`);
+  await waitFor(`!!document.querySelector("[aria-label='Salida del click y cues']")`, "split selectors");
+  await evaluate(`(() => { const s = document.querySelector("[aria-label='Salida de la banda']"); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(s, "1"); s.dispatchEvent(new Event("change", { bubbles: true })); })()`);
+  await sleep(400);
+  let o = await invoke("output_info");
+  check("choose the band output: band on 2, click moves to 1 (never both on one)", o.mainChannel === 1 && o.monitorChannel === 0 && o.outputMode === 1, `band ${o.mainChannel + 1}, click ${o.monitorChannel + 1}`);
+  await clickButton("Intercambiar salidas");
+  await sleep(400);
+  o = await invoke("output_info");
+  check("swap outputs button", o.mainChannel === 0 && o.monitorChannel === 1, `band ${o.mainChannel + 1}, click ${o.monitorChannel + 1}`);
+  await clickButton("Intercambiar salidas");
+  await sleep(400);
+  const probeLabels = await evaluate(`[...document.querySelectorAll("[aria-label^='Probar salida']")].map(b => b.innerText.replace(/\\s+/g, " ")).join(" | ")`);
+  check("test-tone buttons show what plays on each output", probeLabels.includes("Salida 1 Click y cues") && probeLabels.includes("Salida 2 Banda"), probeLabels);
+  await shot("08-audio-settings");
+  const bad = await invoke("audio_test_tone", { channel: 99 });
+  check("test tone refuses an output the device does not have", !!bad?.__error);
+  check("test tone can be stopped", (await invoke("audio_test_tone", { channel: -1 })) === null);
+
+  // Saved: reopening the device keeps the chosen outputs.
+  const current = { typeName: out0.typeName, deviceName: out0.deviceName, sampleRate: 0, bufferSize: 0 };
+  o = await invoke("audio_set_device", { choice: current });
+  check("device choice saved; chosen outputs kept after reopening", o.usingPreferred === true && o.mainChannel === 1 && o.monitorChannel === 0, o.__error?.message ?? `band ${o.mainChannel + 1}`);
+  const studioRouting = async () => {
+    await evaluate(`location.hash = "#/studio?song=${folderSong.id}"`);
+    await waitFor(`!!document.querySelector("[aria-label^='Volumen de Bass:']")`, "studio with the song");
+    await evaluate(`[...document.querySelectorAll("button")].find(b => b.textContent.trim().toUpperCase() === "SALIDAS")?.click()`);
+    await waitFor(`!!document.querySelector("[data-output-routing]")`, "routing line");
+    await sleep(2200);
+    return evaluate(`document.querySelector("[data-output-routing]").innerText`);
+  };
+  const songs = await invoke("library_songs");
+  const folderSong = songs.find((x) => x.title === "song");
+  await invoke("studio_open_song", { songId: folderSong.id });
+  for (let i = 0; i < 100 && (await invoke("studio_status")).engine?.state !== "ready"; i++) await sleep(150);
+  const routingText = await studioRouting();
+  check("Studio shows where the band and the click go", routingText.includes("Banda → salida 2") && routingText.includes("Click y cues → salida 1"), routingText.replace(/\s+/g, " "));
+
+  // Interface not connected: remembered, default output meanwhile, warning everywhere.
+  o = await invoke("audio_set_device", { choice: { typeName: "Windows Audio", deviceName: "LIVEPLAYER Missing Interface", sampleRate: 0, bufferSize: 0 } });
+  check("missing interface: remembered, still playing through the default output", o.open && o.usingPreferred === false && o.deviceName === out0.deviceName, o.__error?.message ?? o.lastDeviceEvent);
+  await waitFor(`!!document.querySelector("[data-device-banner]") && document.querySelector("[data-device-banner]").innerText.includes("no está conectado")`, "device banner");
+  check("warning banner shown on every page", true);
+  await shot("09-device-missing");
+  o = await invoke("audio_set_device", { choice: current });
+  await clickButton("Cerrar aviso");
+  await sleep(2500);
+  check("back on the real device: warning gone", o.usingPreferred === true && !(await evaluate(`!!document.querySelector("[data-device-banner]")`)));
+
+  // Another sample rate: the song is converted and keeps its place.
+  await invoke("transport_seek", { positionSec: 30 });
+  await sleep(300);
+  const exclusive = "Windows Audio (Exclusive Mode)";
+  const caps = await invoke("audio_describe_device", { typeName: exclusive, deviceName: out0.deviceName });
+  const otherRate = (caps.sampleRates ?? []).find((r) => Math.abs(r - (out0.sampleRate ?? 0)) > 1 && (r === 44100 || r === 96000 || r === 88200));
+  if (caps.available && otherRate) {
+    o = await invoke("audio_set_device", { choice: { typeName: exclusive, deviceName: out0.deviceName, sampleRate: otherRate, bufferSize: 0 } });
+    let st = null;
+    for (let i = 0; i < 100; i++) {
+      st = await invoke("studio_status");
+      if (st.engine?.song?.sampleRate === otherRate && !(await invoke("output_info")).reloading) break;
+      await sleep(150);
+    }
+    const tr = await transport();
+    check(`new sample rate (${otherRate / 1000} kHz, exclusive): song converted, position kept`, o.sampleRate === otherRate && st.engine?.song?.sampleRate === otherRate && Math.abs(tr.positionSec - 30) < 0.5, `device ${o.sampleRate}, song ${st.engine?.song?.sampleRate}, pos ${tr.positionSec?.toFixed(2)}`);
+    o = await invoke("audio_set_device", { choice: current });
+    for (let i = 0; i < 100 && (await invoke("studio_status")).engine?.song?.sampleRate !== o.sampleRate; i++) await sleep(150);
+    check("back to the shared driver", o.typeName === out0.typeName && o.sampleRate === out0.sampleRate);
+  } else {
+    check("new sample rate: skipped (this device offers no other rate)", true, JSON.stringify(caps.sampleRates));
+  }
   await invoke("transport_set_master_gain", { gain: 1 });
 
   console.log(JSON.stringify(checks, null, 2));
@@ -345,6 +432,7 @@ try {
   ws.close();
 } catch (e) {
   console.error("E2E FAILED:", e.message);
+  try { await failureShot?.(); } catch {}
 } finally {
   app.kill();
   await sleep(500);

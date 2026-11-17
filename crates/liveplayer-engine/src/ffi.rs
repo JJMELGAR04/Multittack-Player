@@ -3,7 +3,7 @@
 
 use std::ffi::{c_char, c_int};
 
-pub const ABI_VERSION: u32 = 4;
+pub const ABI_VERSION: u32 = 5;
 
 #[repr(C)]
 pub struct lp_engine {
@@ -60,6 +60,17 @@ unsafe extern "C" {
     ) -> lp_result;
 
     pub fn lp_engine_open_default_output(engine: *mut lp_engine) -> lp_result;
+    pub fn lp_engine_describe_device(
+        engine: *mut lp_engine,
+        request_json: *const c_char,
+        buffer: *mut c_char,
+        capacity: usize,
+        out_required: *mut usize,
+    ) -> lp_result;
+    pub fn lp_engine_set_audio_device(engine: *mut lp_engine, request_json: *const c_char) -> lp_result;
+    pub fn lp_engine_set_output_channels(engine: *mut lp_engine, main_first: i32, monitor_first: i32) -> lp_result;
+    pub fn lp_engine_test_tone(engine: *mut lp_engine, channel: i32) -> lp_result;
+    pub fn lp_engine_show_device_panel(engine: *mut lp_engine) -> lp_result;
     pub fn lp_engine_get_output_info(
         engine: *mut lp_engine,
         buffer: *mut c_char,

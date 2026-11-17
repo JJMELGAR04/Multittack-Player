@@ -32,6 +32,12 @@ pub fn run() {
 
             let data_dir = data_dir(app.handle())?;
             let db = Database::open(data_dir.join(DB_FILE_NAME))?;
+            // The saved audio interface (or the default output) opens now, so
+            // Audio Settings and the test tone work before any song is loaded.
+            if let Some(engine) = app.try_state::<Engine>() {
+                commands::audio::apply_saved_device(&engine, &db);
+                commands::studio::apply_output_settings(&engine, &db);
+            }
             app.manage(Mutex::new(db));
             app.manage(commands::studio::CurrentSong::default());
             Ok(())
@@ -42,6 +48,11 @@ pub fn run() {
             commands::engine::engine_info,
             commands::engine::engine_ping,
             commands::engine::audio_diagnostics,
+            commands::audio::audio_describe_device,
+            commands::audio::audio_set_device,
+            commands::audio::audio_set_channels,
+            commands::audio::audio_test_tone,
+            commands::audio::audio_show_panel,
             commands::database::database_status,
             commands::studio::studio_open_files,
             commands::studio::studio_open_song,
