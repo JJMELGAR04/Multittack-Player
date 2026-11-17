@@ -1866,7 +1866,7 @@ checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
 
 [[package]]
 name = "liveplayer-db"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "rusqlite",
  "serde",
@@ -1876,7 +1876,7 @@ dependencies = [
 
 [[package]]
 name = "liveplayer-desktop"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "liveplayer-db",
  "liveplayer-engine",
@@ -1891,7 +1891,7 @@ dependencies = [
 
 [[package]]
 name = "liveplayer-engine"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "cmake",
  "serde",

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Activity, ChevronDown, ChevronUp, FolderOpen, Gauge, ListMusic, SlidersHorizontal, Tags, X } from "lucide-react";
 import type { OutputMode, SectionRecord } from "@/lib/ipc/types";
 import { Arrange } from "./Arrange";
@@ -124,6 +125,18 @@ export function StudioPage() {
   }, [studio.startImport]);
   const hovering = useFileDrop(studio.startImport, studio.native && !studio.importDraft);
 
+  // Coming from the library: /studio?song=ID opens it, /studio?import=1 opens the picker.
+  const [params, setParams] = useSearchParams();
+  useEffect(() => {
+    const songParam = params.get("song");
+    const importParam = params.get("import");
+    if (!songParam && !importParam) return;
+    setParams({}, { replace: true });
+    if (songParam && studio.native) void studio.openSong(Number(songParam));
+    else if (importParam && studio.native) void open();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params]);
+
   const open = async () => {
     try {
       const paths = await pickFiles();
@@ -172,7 +185,8 @@ export function StudioPage() {
   const reorderMixer = (from: number, to: number) => studio.reorderMixer(moveItem(mixerTracks, from, to).map((t) => t.index));
   const outputMode: OutputMode = studio.outputSettings?.mode ?? transport?.outputMode ?? "stereo";
   const monitorGain = studio.outputSettings?.monitorGain ?? 1;
-  const setOutputMode = (mode: OutputMode) => studio.setOutput({ mode, monitorGain });
+  const mainGain = studio.outputSettings?.mainGain ?? transport?.masterGain ?? 1;
+  const setOutputMode = (mode: OutputMode) => studio.setOutput({ mode, monitorGain, mainGain });
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -330,14 +344,14 @@ export function StudioPage() {
                     mute={studio.mixer.mute}
                     solo={studio.mixer.solo}
                     meters={studio.meters}
-                    masterDb={gainToDb(transport?.masterGain ?? 1)}
+                    masterDb={gainToDb(mainGain)}
                     monitorDb={gainToDb(monitorGain)}
                     limiting={{ main: (transport?.mainLimiterGain ?? 1) < 0.999, monitor: (transport?.monitorLimiterGain ?? 1) < 0.999 }}
                     onVolume={studio.setTrackVolume}
                     onMute={studio.toggleMute}
                     onSolo={studio.toggleSolo}
-                    onMaster={(db) => studio.setGain(dbToGain(db))}
-                    onMonitor={(db) => studio.setOutput({ mode: outputMode, monitorGain: dbToGain(db) })}
+                    onMaster={(db) => studio.setOutput({ mode: outputMode, monitorGain, mainGain: dbToGain(db) })}
+                    onMonitor={(db) => studio.setOutput({ mode: outputMode, monitorGain: dbToGain(db), mainGain })}
                     onReorder={reorderMixer}
                   />
                 )}

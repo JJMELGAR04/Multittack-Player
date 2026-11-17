@@ -12,7 +12,7 @@ export function formatTime(sec: number, decimals = 1): string {
 // ---- Volume ------------------------------------------------------------------
 
 export const MIN_DB = -60;
-export const MAX_DB = 6;
+export const MAX_DB = 8;
 
 export function dbToGain(db: number): number {
   return db <= MIN_DB ? 0 : Math.pow(10, db / 20);
@@ -20,6 +20,64 @@ export function dbToGain(db: number): number {
 
 export function gainToDb(gain: number): number {
   return gain <= 0 ? MIN_DB : Math.max(MIN_DB, Math.min(MAX_DB, 20 * Math.log10(gain)));
+}
+
+/**
+ * Reads a volume typed by the user: "-3,5", "−6.5", "+8", "0", "-inf"/"−∞"
+ * (= silence). Returns null if it is not a number; clamps to the fader range.
+ */
+export function parseDbInput(text: string): number | null {
+  const t = text.trim().toLowerCase().replace(/\s*db$/, "").replace("−", "-").replace(",", ".");
+  if (t === "-inf" || t === "-∞" || t === "inf" || t === "∞") return MIN_DB;
+  if (!/^[+-]?(\d+(\.\d*)?|\.\d+)$/.test(t)) return null;
+  const v = Number(t);
+  if (!Number.isFinite(v)) return null;
+  return Math.round(Math.min(MAX_DB, Math.max(MIN_DB, v)) * 10) / 10;
+}
+
+/**
+ * Console-style fader curve: 0 dB sits in the middle of the travel, the upper
+ * half covers 0..+8 dB and the lower half -60..0 dB, with most of it spent on
+ * the useful zone (-20..0) instead of on near-silence. [position 0..1, dB]
+ */
+export const FADER_CURVE: readonly (readonly [number, number])[] = [
+  [0, MIN_DB],
+  [0.04, -45],
+  [0.1, -32],
+  [0.18, -20],
+  [0.27, -12],
+  [0.37, -6],
+  [0.5, 0],
+  [1, MAX_DB],
+];
+
+/** dB -> fader position (0 = bottom, 1 = top). */
+export function dbToFader(db: number): number {
+  if (db <= MIN_DB) return 0;
+  if (db >= MAX_DB) return 1;
+  for (let i = 1; i < FADER_CURVE.length; i++) {
+    const [p1, d1] = FADER_CURVE[i]!;
+    const [p0, d0] = FADER_CURVE[i - 1]!;
+    if (db <= d1) return p0 + ((db - d0) / (d1 - d0)) * (p1 - p0);
+  }
+  return 1;
+}
+
+/** Fader position -> dB, rounded to 0.1 dB and snapping to 0 dB near the centre. */
+export function faderToDb(pos: number): number {
+  if (pos <= 0) return MIN_DB;
+  if (pos >= 1) return MAX_DB;
+  let db = MAX_DB;
+  for (let i = 1; i < FADER_CURVE.length; i++) {
+    const [p1, d1] = FADER_CURVE[i]!;
+    const [p0, d0] = FADER_CURVE[i - 1]!;
+    if (pos <= p1) {
+      db = d0 + ((pos - p0) / (p1 - p0)) * (d1 - d0);
+      break;
+    }
+  }
+  if (Math.abs(db) < 0.25) return 0; // detent at 0 dB
+  return Math.round(db * 10) / 10;
 }
 
 export function formatDb(db: number): string {

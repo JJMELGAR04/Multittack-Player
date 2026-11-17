@@ -76,6 +76,9 @@ static void testTransportWithoutSong (lp_engine* e)
     CHECK (lp_engine_set_tempo_ratio (e, 0.1) == LP_ERR_INVALID_ARGUMENT);
     CHECK (lp_engine_set_tempo_ratio (e, 3.0) == LP_ERR_INVALID_ARGUMENT);
     CHECK (lp_engine_set_master_gain (e, -1.0) == LP_ERR_INVALID_ARGUMENT);
+    CHECK (lp_engine_set_master_gain (e, 4.5) == LP_ERR_INVALID_ARGUMENT);
+    CHECK (lp_engine_set_master_gain (e, 2.512) == LP_OK); // +8 dB
+    CHECK (lp_engine_set_master_gain (e, 1.0) == LP_OK);
     CHECK (lp_engine_seek (e, std::nan ("")) == LP_ERR_INVALID_ARGUMENT);
     CHECK (lp_engine_load_song (e, nullptr) == LP_ERR_INVALID_ARGUMENT);
     CHECK (lp_engine_load_song (e, "{\"tracks\":[]}") == LP_ERR_INVALID_ARGUMENT);

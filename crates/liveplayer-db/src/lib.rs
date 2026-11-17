@@ -14,7 +14,8 @@ use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
 
 pub use songs::{
-    NewSongMeta, NewTrack, SECTION_KINDS, SectionRecord, SongRecord, SongSummary, SongTempo, TIME_SIGNATURES, TRACK_ROLES,
+    LibrarySong, NewSongMeta, NewTrack, SECTION_KINDS, SectionRecord, SongRecord, SongSummary, SongTempo, TIME_SIGNATURES,
+    TRACK_ROLES, TrackMix, MAX_TRACK_DB, MIN_TRACK_DB,
     TrackOrder, TrackRecord, beats_per_bar, bus_for_role, default_display_order,
 };
 
@@ -26,6 +27,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0003_roles_meter.sql"),
     include_str!("../migrations/0004_track_order.sql"),
     include_str!("../migrations/0005_mixer_order.sql"),
+    include_str!("../migrations/0006_mixer_library.sql"),
 ];
 
 pub const LATEST_SCHEMA_VERSION: u32 = MIGRATIONS.len() as u32;

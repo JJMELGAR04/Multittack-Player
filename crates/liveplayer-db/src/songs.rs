@@ -15,6 +15,10 @@ pub const TRACK_ROLES: &[&str] = &[
 
 pub const TIME_SIGNATURES: &[&str] = &["2/4", "3/4", "4/4", "5/4", "6/8", "12/8"];
 
+/// Fader range saved per track.
+pub const MIN_TRACK_DB: f64 = -60.0;
+pub const MAX_TRACK_DB: f64 = 8.0;
+
 /// Output bus of a role: click and cues are heard only by the band.
 pub fn bus_for_role(role: &str) -> &'static str {
     if role == "click" || role == "cues" { "monitor" } else { "main" }
@@ -60,6 +64,35 @@ pub struct TrackRecord {
     pub display_order: u32,
     /// Where its strip is in the mixer (0 = left). Independent of `display_order`.
     pub mixer_order: u32,
+    /// Saved mixer settings of the track.
+    pub volume_db: f64,
+    pub muted: bool,
+    pub soloed: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TrackMix {
+    pub volume_db: f64,
+    pub muted: bool,
+    pub soloed: bool,
+}
+
+/// One row of the song library.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LibrarySong {
+    pub id: i64,
+    pub title: String,
+    pub original_bpm: Option<f64>,
+    pub target_bpm: Option<f64>,
+    pub time_signature: String,
+    pub duration_sec: Option<f64>,
+    pub track_count: u32,
+    pub section_count: u32,
+    pub source_archive: Option<String>,
+    pub created_at: String,
+    pub last_opened_at: String,
 }
 
 /** Which arrangement to change. */
@@ -257,6 +290,90 @@ impl Database {
         Ok(())
     }
 
+    /// Saves the fader, mute and solo of one track.
+    pub fn set_track_mix(&self, song_id: i64, position: u32, mix: &TrackMix) -> Result<(), DbError> {
+        if !mix.volume_db.is_finite() || !(MIN_TRACK_DB..=MAX_TRACK_DB).contains(&mix.volume_db) {
+            return Err(invalid(format!("volumen fuera de rango ({MIN_TRACK_DB} a +{MAX_TRACK_DB} dB): {}", mix.volume_db)));
+        }
+        let n = self.conn.execute(
+            "UPDATE song_tracks SET volume_db = ?3, muted = ?4, soloed = ?5 WHERE song_id = ?1 AND position = ?2",
+            params![song_id, position, mix.volume_db, mix.muted as i64, mix.soloed as i64],
+        )?;
+        if n == 0 { Err(DbError::NotFound(format!("pista {position} de la canción {song_id}"))) } else { Ok(()) }
+    }
+
+    /// Stores the length of the song the first time it is loaded (or if it changed).
+    pub fn set_song_duration(&self, id: i64, seconds: f64) -> Result<(), DbError> {
+        if !seconds.is_finite() || seconds < 0.0 {
+            return Err(invalid("duración no válida"));
+        }
+        self.conn.execute(
+            "UPDATE songs SET duration_sec = ?2 WHERE id = ?1 AND (duration_sec IS NULL OR abs(duration_sec - ?2) > 0.01)",
+            params![id, seconds],
+        )?;
+        Ok(())
+    }
+
+    /// Every song with the data shown in the library.
+    pub fn library(&self) -> Result<Vec<LibrarySong>, DbError> {
+        Ok(self
+            .conn
+            .prepare(
+                "SELECT s.id, s.title, s.original_bpm, s.target_bpm, s.time_signature, s.duration_sec,
+                        (SELECT COUNT(*) FROM song_tracks t WHERE t.song_id = s.id),
+                        (SELECT COUNT(*) FROM song_sections x WHERE x.song_id = s.id),
+                        s.source_archive, s.created_at, s.last_opened_at
+                 FROM songs s ORDER BY s.title COLLATE NOCASE, s.id",
+            )?
+            .query_map([], |r| {
+                Ok(LibrarySong {
+                    id: r.get(0)?,
+                    title: r.get(1)?,
+                    original_bpm: r.get(2)?,
+                    target_bpm: r.get(3)?,
+                    time_signature: r.get(4)?,
+                    duration_sec: r.get(5)?,
+                    track_count: r.get(6)?,
+                    section_count: r.get(7)?,
+                    source_archive: r.get(8)?,
+                    created_at: r.get(9)?,
+                    last_opened_at: r.get(10)?,
+                })
+            })?
+            .collect::<Result<_, _>>()?)
+    }
+
+    pub fn rename_song(&self, id: i64, title: &str) -> Result<(), DbError> {
+        let title = title.trim();
+        if title.is_empty() || title.chars().count() > 200 {
+            return Err(invalid("el título debe tener entre 1 y 200 caracteres"));
+        }
+        let n = self.conn.execute("UPDATE songs SET title = ?2 WHERE id = ?1", params![id, title])?;
+        if n == 0 { Err(DbError::NotFound(format!("canción {id}"))) } else { Ok(()) }
+    }
+
+    /// Removes a song (tracks and sections go with it). Returns its file paths
+    /// so the caller can decide what to do with files it owns.
+    pub fn delete_song(&mut self, id: i64) -> Result<Vec<String>, DbError> {
+        let tx = self.conn.transaction()?;
+        let files: Vec<String> = tx
+            .prepare("SELECT file_path FROM song_tracks WHERE song_id = ?1 ORDER BY position")?
+            .query_map([id], |r| r.get(0))?
+            .collect::<Result<_, _>>()?;
+        let n = tx.execute("DELETE FROM songs WHERE id = ?1", [id])?;
+        if n == 0 {
+            return Err(DbError::NotFound(format!("canción {id}")));
+        }
+        tx.commit()?;
+        Ok(files)
+    }
+
+    /// True if another song still uses this file (do not delete it).
+    pub fn file_in_use(&self, path: &str) -> Result<bool, DbError> {
+        let n: i64 = self.conn.query_row("SELECT COUNT(*) FROM song_tracks WHERE file_path = ?1", [path], |r| r.get(0))?;
+        Ok(n > 0)
+    }
+
     pub fn set_song_info(&self, id: i64, title: &str, time_signature: &str) -> Result<(), DbError> {
         let title = title.trim();
         if title.is_empty() || title.chars().count() > 200 {
@@ -322,7 +439,7 @@ impl Database {
         song.tracks = self
             .conn
             .prepare(
-                "SELECT position, name, file_path, role, bus, display_order, mixer_order
+                "SELECT position, name, file_path, role, bus, display_order, mixer_order, volume_db, muted, soloed
                  FROM song_tracks WHERE song_id = ?1 ORDER BY position",
             )?
             .query_map([id], |r| {
@@ -334,6 +451,9 @@ impl Database {
                     bus: r.get(4)?,
                     display_order: r.get(5)?,
                     mixer_order: r.get(6)?,
+                    volume_db: r.get(7)?,
+                    muted: r.get::<_, i64>(8)? != 0,
+                    soloed: r.get::<_, i64>(9)? != 0,
                 })
             })?
             .collect::<Result<_, _>>()?;
@@ -465,6 +585,50 @@ mod tests {
         assert_eq!(mixer(&db), vec!["Bass", "Drums", "Click", "Guia"]);
         assert_eq!(shown(&db), vec!["Drums", "Click", "Guia", "Bass"]); // tracks unchanged
         assert_eq!(default_display_order(&["bass", "click"]), vec![1, 0]);
+    }
+
+    #[test]
+    fn mixer_settings_are_saved_per_track() {
+        let mut db = Database::open_in_memory().unwrap();
+        let id = db.create_song("s", &tracks(), &meta()).unwrap();
+        let fresh = db.get_song(id).unwrap().unwrap();
+        assert!(fresh.tracks.iter().all(|t| t.volume_db == 0.0 && !t.muted && !t.soloed));
+
+        db.set_track_mix(id, 1, &TrackMix { volume_db: -6.5, muted: true, soloed: false }).unwrap();
+        db.set_track_mix(id, 0, &TrackMix { volume_db: 8.0, muted: false, soloed: true }).unwrap();
+        let s = db.get_song(id).unwrap().unwrap();
+        assert_eq!((s.tracks[1].volume_db, s.tracks[1].muted, s.tracks[1].soloed), (-6.5, true, false));
+        assert_eq!((s.tracks[0].volume_db, s.tracks[0].soloed), (8.0, true));
+
+        assert!(db.set_track_mix(id, 0, &TrackMix { volume_db: 8.1, muted: false, soloed: false }).is_err());
+        assert!(db.set_track_mix(id, 0, &TrackMix { volume_db: -61.0, muted: false, soloed: false }).is_err());
+        assert!(matches!(db.set_track_mix(id, 9, &TrackMix { volume_db: 0.0, muted: false, soloed: false }), Err(DbError::NotFound(_))));
+    }
+
+    #[test]
+    fn library_rename_and_delete() {
+        let mut db = Database::open_in_memory().unwrap();
+        let a = db.create_song("Zeta", &tracks(), &meta()).unwrap();
+        let b = db.create_song("alfa", &[NewTrack { name: "Bass".into(), file_path: "C:\\b\\Bass.wav".into(), role: "bass".into() }], &meta()).unwrap();
+        db.set_song_duration(a, 250.0).unwrap();
+        db.replace_sections(a, &[section(0.0, "intro", "Intro")]).unwrap();
+
+        let lib = db.library().unwrap();
+        assert_eq!(lib.iter().map(|s| s.title.as_str()).collect::<Vec<_>>(), vec!["alfa", "Zeta"]); // case-insensitive
+        let z = lib.iter().find(|s| s.id == a).unwrap();
+        assert_eq!((z.duration_sec, z.track_count, z.section_count), (Some(250.0), 2, 1));
+
+        db.rename_song(b, "Alfa y Omega").unwrap();
+        assert!(db.rename_song(b, " ").is_err());
+        assert_eq!(db.get_song(b).unwrap().unwrap().title, "Alfa y Omega");
+
+        assert!(db.file_in_use("C:\\songs\\a\\Click.wav").unwrap());
+        let files = db.delete_song(a).unwrap();
+        assert_eq!(files.len(), 2);
+        assert!(!db.file_in_use("C:\\songs\\a\\Click.wav").unwrap());
+        assert!(db.get_song(a).unwrap().is_none());
+        assert!(matches!(db.delete_song(a), Err(DbError::NotFound(_))));
+        assert_eq!(db.library().unwrap().len(), 1);
     }
 
     #[test]

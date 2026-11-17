@@ -1,5 +1,9 @@
 import { useEffect, useRef } from "react";
-import { meterFraction } from "./model";
+import { MAX_DB, meterFraction, MIN_DB } from "./model";
+
+const RANGE = MAX_DB - MIN_DB;
+const RED = (-3 - MIN_DB) / RANGE;
+const YELLOW = (-12 - MIN_DB) / RANGE;
 
 interface Props {
   /** Returns the latest peak (linear) for each channel. */
@@ -13,7 +17,7 @@ const FALL_DB_PER_SEC = 24;
 const HOLD_MS = 1500;
 
 /**
- * Vertical peak meter (-60..+6 dB): green, yellow above -12 dB, red above
+ * Vertical peak meter (-60..+8 dB): green, yellow above -12 dB, red above
  * -3 dB, with peak hold. Animated in requestAnimationFrame by writing styles
  * directly, so dozens of meters cost no React renders.
  */
@@ -35,7 +39,7 @@ export function Meter({ read, height, barWidth = 4 }: Props) {
       const values = readRef.current();
       values.forEach((peak, c) => {
         const target = meterFraction(peak);
-        const fall = (FALL_DB_PER_SEC * dt) / 66;
+        const fall = (FALL_DB_PER_SEC * dt) / RANGE;
         level[c] = Math.max(target, (level[c] ?? 0) - fall);
         const h = hold[c] ?? { v: 0, t: 0 };
         if (level[c]! >= h.v || now - h.t > HOLD_MS) hold[c] = { v: level[c]!, t: now };
@@ -46,7 +50,7 @@ export function Meter({ read, height, barWidth = 4 }: Props) {
           const v = hold[c]!.v;
           mark.style.bottom = `${v * 100}%`;
           mark.style.opacity = v > 0.01 ? "1" : "0";
-          mark.style.background = v > 57 / 66 ? "#ef4444" : v > 48 / 66 ? "#facc15" : "#4ade80";
+          mark.style.background = v > RED ? "#ef4444" : v > YELLOW ? "#facc15" : "#4ade80";
         }
       });
       raf = requestAnimationFrame(tick);
@@ -59,10 +63,12 @@ export function Meter({ read, height, barWidth = 4 }: Props) {
     <div className="flex gap-px" style={{ height }} aria-hidden>
       {Array.from({ length: channels }, (_, c) => (
         <div key={c} className="relative overflow-hidden rounded-[1px] bg-black/60" style={{ width: barWidth }}>
-          {/* -60..+6 dB: red from -3 dB (57/66), yellow from -12 dB (48/66). */}
+          {/* -60..+8 dB: green, yellow from -12 dB, red from -3 dB. */}
           <div
             className="absolute inset-0"
-            style={{ background: "linear-gradient(to top, #22c55e 0%, #4ade80 72.7%, #facc15 72.7%, #facc15 86.4%, #ef4444 86.4%)" }}
+            style={{
+              background: `linear-gradient(to top, #22c55e 0%, #4ade80 ${YELLOW * 100}%, #facc15 ${YELLOW * 100}%, #facc15 ${RED * 100}%, #ef4444 ${RED * 100}%)`,
+            }}
           />
           <div
             ref={(el) => {

@@ -3,7 +3,7 @@
 // Usage: node scripts/e2e-smoke.mjs <path-to-liveplayer-desktop.exe> <screenshot-dir>
 // (Windows only: relies on WebView2.)
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -99,7 +99,7 @@ try {
   await evaluate(`location.hash = "#/studio"`);
   await waitFor(`document.querySelector("h1")?.textContent === "Multitrack Studio"`, "studio page");
   await invoke("transport_set_master_gain", { gain: 0 }); // keep the test silent
-  await invoke("studio_set_output", { settings: { mode: "stereo", monitorGain: 0 } });
+  await invoke("studio_set_output", { settings: { mode: "stereo", monitorGain: 0, mainGain: 0 } });
 
   const t0 = Date.now();
   const opened = await invoke("studio_open_files", { paths: [songFolder] }); // a folder = its audio files
@@ -224,7 +224,7 @@ try {
   check("click track goes to the band bus", (await invoke("studio_status")).engine.song.tracks.find((tr) => tr.name === "Click")?.bus === "monitor");
 
   // ---- Zip import with review dialog ----
-  await invoke("studio_set_output", { settings: { mode: "stereo", monitorGain: 0 } }); // silent click bus too
+  await invoke("studio_set_output", { settings: { mode: "stereo", monitorGain: 0, mainGain: 0 } }); // silent click bus too
   await evaluate(`window.__LIVEPLAYER_TEST__.startImport([${JSON.stringify(songZip)}])`);
   await waitFor(`!!document.querySelector("[role=dialog]")`, "import dialog");
   const dialogText = await evaluate(`document.querySelector("[role=dialog]").innerText`);
@@ -267,6 +267,77 @@ try {
   await sleep(1500);
   const st3 = await invoke("studio_status");
   check("same zip again: opens the saved song, no duplicate", st3.songId === st2.songId && !(await evaluate(`!!document.querySelector("[role=dialog]")`)));
+
+  // ---- Phase 3: mixer saved per song ----
+  const typeDb = async (name, value) => {
+    await evaluate(`(() => { const b = document.querySelector("[aria-label^='Volumen de ${name}:']"); b.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })); })()`);
+    await sleep(100);
+    await evaluate(`(() => {
+      const i = document.querySelector("[aria-label='Escribir volumen de ${name}']");
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(i, ${JSON.stringify(value)});
+      i.dispatchEvent(new Event("input", { bubbles: true }));
+      i.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    })()`);
+    await sleep(150);
+    return evaluate(`document.querySelector("[aria-label^='Volumen de ${name}:']")?.textContent`);
+  };
+  await waitFor(`!!document.querySelector("[aria-label^='Volumen de Bass:']")`, "mixer of the reopened song");
+  await sleep(800); // saved mixer applied after load
+  check("type an exact volume (double-click): -6,5 dB", (await typeDb("Bass", "-6,5")) === "−6.5", await evaluate(`document.querySelector("[aria-label^='Volumen de Bass:']")?.textContent`));
+  check("fader limit is +8 dB (typing +12 gives +8)", (await typeDb("Keys", "+12")) === "+8.0");
+  const faderPos = (n) => evaluate(`(() => { const f = document.querySelector("input[type=range][aria-label='Volumen de ${n}']"); const r = f.getBoundingClientRect(); return [Number(f.value), Math.round(r.height)]; })()`);
+  const [keysPos] = await faderPos("Keys");
+  const [drumsPos, faderHeight] = await faderPos("Click");
+  check("fader curve: 0 dB sits in the middle, +8 dB at the top", drumsPos === 500 && keysPos === 1000 && faderHeight === 140, `0 dB at ${drumsPos}/1000, +8 at ${keysPos}/1000`);
+  await clickButton("Silenciar Click");
+  await sleep(800); // debounced save
+  const mixSaved = await invoke("studio_get_song", { songId: st2.songId });
+  const tr = (n) => mixSaved.tracks.find((x) => x.name === n);
+  check("mixer saved with the song", tr("Bass").volumeDb === -6.5 && tr("Keys").volumeDb === 8 && tr("Click").muted === true, JSON.stringify(mixSaved.tracks.map((x) => [x.name, x.volumeDb, x.muted])));
+
+  // ---- Phase 3: song library ----
+  await evaluate(`window.confirm = () => true`); // accept the delete confirmation
+  await evaluate(`location.hash = "#/songs"`);
+  await waitFor(`document.querySelectorAll("[data-library-song]").length >= 2`, "library rows");
+  const libTitles = await evaluate(`[...document.querySelectorAll("[data-library-song]")].map(r => r.dataset.librarySong).join(", ")`);
+  check("library lists the songs", libTitles.includes("Prueba") && libTitles.includes("song"), libTitles);
+  const libRow = await evaluate(`document.querySelector("[data-library-song='Prueba']").innerText`);
+  check("library shows BPM, meter, duration and tracks", libRow.includes("96") && libRow.includes("4/4") && libRow.includes("2:21") && libRow.includes("5"), libRow.replace(/\s+/g, " "));
+  await evaluate(`(() => { const i = document.querySelector("[aria-label='Buscar canción']"); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(i, "prue"); i.dispatchEvent(new Event("input", { bubbles: true })); })()`);
+  await sleep(200);
+  check("search filters the library", (await evaluate(`document.querySelectorAll("[data-library-song]").length`)) === 1);
+  await evaluate(`(() => { const i = document.querySelector("[aria-label='Buscar canción']"); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(i, ""); i.dispatchEvent(new Event("input", { bubbles: true })); })()`);
+  await sleep(150);
+  await clickButton("Renombrar Prueba");
+  await sleep(100);
+  await evaluate(`(() => {
+    const i = document.querySelector("[aria-label='Nuevo título de Prueba']");
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(i, "Prueba renombrada");
+    i.dispatchEvent(new Event("input", { bubbles: true }));
+    i.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    i.blur();
+  })()`);
+  await waitFor(`!!document.querySelector("[data-library-song='Prueba renombrada']")`, "renamed row");
+  check("rename a song from the library", true);
+  await shot("07-library");
+
+  // Open the zip song from the library: the saved mixer comes back.
+  await clickButton("Abrir Prueba renombrada");
+  await waitFor(`location.hash.startsWith("#/studio") && !!document.querySelector("[aria-label^='Volumen de Bass:']")`, "studio from library");
+  await sleep(1500);
+  const restoredBass = await evaluate(`document.querySelector("[aria-label^='Volumen de Bass:']")?.textContent`);
+  const clickMuted = await evaluate(`document.querySelector("[aria-label='Silenciar Click']")?.getAttribute("aria-pressed")`);
+  check("open from library restores the saved mixer", restoredBass === "−6.5" && clickMuted === "true", `Bass ${restoredBass}, Click muted ${clickMuted}`);
+
+  // Delete it: the files extracted from the zip go too; the original zip stays.
+  const extracted = zipSong.tracks.map((x) => x.filePath);
+  await evaluate(`location.hash = "#/songs"`);
+  await waitFor(`!!document.querySelector("[data-library-song='Prueba renombrada']")`, "library again");
+  await clickButton("Quitar Prueba renombrada");
+  await waitFor(`!document.querySelector("[data-library-song='Prueba renombrada']")`, "row removed");
+  await sleep(300);
+  check("delete removes the song and its extracted files (zip kept)", extracted.every((f) => !existsSync(f)) && existsSync(songZip), extracted[0]);
+  check("files picked by the user are never deleted", existsSync(join(songFolder, "Bass.wav")));
   await invoke("transport_set_master_gain", { gain: 1 });
 
   console.log(JSON.stringify(checks, null, 2));

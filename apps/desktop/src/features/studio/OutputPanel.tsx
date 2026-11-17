@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Headphones, Speaker, SplitSquareHorizontal } from "lucide-react";
 import type { LoadedSong, OutputMode, OutputSettings, SongRecord, TrackRole, TransportState } from "@/lib/ipc/types";
-import { BUS_LABEL, busForRole, dbToGain, formatDb, gainToDb, MAX_DB, MIN_DB, TRACK_ROLES } from "./model";
+import { BUS_LABEL, busForRole, dbToGain, dbToFader, faderToDb, formatDb, gainToDb, TRACK_ROLES } from "./model";
 
 const MODES: { mode: OutputMode; title: string; detail: string; icon: typeof Speaker; needs: number }[] = [
   {
@@ -55,7 +55,7 @@ export function OutputPanel({ settings, transport, song, onChange }: OutputProps
               role="radio"
               aria-checked={active}
               disabled={disabled}
-              onClick={() => onChange({ mode: m.mode, monitorGain: dbToGain(monDb) })}
+              onClick={() => onChange({ mode: m.mode, monitorGain: dbToGain(monDb), mainGain: settings?.mainGain ?? 1 })}
               className={`flex items-start gap-3 rounded-lg border px-3 py-2 text-left disabled:opacity-40 ${
                 active ? "border-info-500 bg-info-500/10" : "border-ink-800 bg-ink-900 hover:border-ink-600"
               }`}
@@ -85,14 +85,19 @@ export function OutputPanel({ settings, transport, song, onChange }: OutputProps
         <input
           type="range"
           aria-label="Volumen de click y cues"
-          min={MIN_DB}
-          max={MAX_DB}
-          step={0.5}
-          value={monDb}
+          aria-valuetext={formatDb(monDb)}
+          min={0}
+          max={1000}
+          step={1}
+          value={Math.round(dbToFader(monDb) * 1000)}
+          onDoubleClick={() => {
+            setMonDb(0);
+            onChange({ mode, monitorGain: 1, mainGain: settings?.mainGain ?? 1 });
+          }}
           onChange={(e) => {
-            const v = Number(e.target.value);
+            const v = faderToDb(Number(e.target.value) / 1000);
             setMonDb(v);
-            onChange({ mode, monitorGain: dbToGain(v) });
+            onChange({ mode, monitorGain: dbToGain(v), mainGain: settings?.mainGain ?? 1 });
           }}
           className="flex-1 accent-info-500"
         />

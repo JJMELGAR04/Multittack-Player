@@ -247,7 +247,7 @@ lp_result lp_engine_set_track_route (lp_engine* engine, int32_t track, int32_t b
 
 lp_result lp_engine_set_track_gain (lp_engine* engine, int32_t track, double gain)
 {
-    if (engine == nullptr || ! std::isfinite (gain) || gain < 0.0 || gain > 2.0)
+    if (engine == nullptr || ! std::isfinite (gain) || gain < 0.0 || gain > 4.0)
         return LP_ERR_INVALID_ARGUMENT;
     return guarded (engine, [&] { return engine->impl.setTrackGain (track, (float) gain) ? LP_OK : LP_ERR_INVALID_STATE; });
 }
@@ -278,7 +278,7 @@ lp_result lp_engine_get_meters (lp_engine* engine, float* values, size_t capacit
 
 lp_result lp_engine_set_monitor_gain (lp_engine* engine, double gain)
 {
-    if (engine == nullptr || ! std::isfinite (gain) || gain < 0.0 || gain > 2.0)
+    if (engine == nullptr || ! std::isfinite (gain) || gain < 0.0 || gain > 4.0)
         return LP_ERR_INVALID_ARGUMENT;
     return guarded (engine, [&] {
         engine->impl.getPlayer().setMonitorGain ((float) gain);
@@ -339,7 +339,7 @@ lp_result lp_engine_seek (lp_engine* engine, double position_sec)
 
 lp_result lp_engine_set_master_gain (lp_engine* engine, double gain)
 {
-    if (engine == nullptr || ! std::isfinite (gain) || gain < 0.0 || gain > 2.0)
+    if (engine == nullptr || ! std::isfinite (gain) || gain < 0.0 || gain > 4.0)
         return LP_ERR_INVALID_ARGUMENT;
     return guarded (engine, [&] {
         engine->impl.getPlayer().setMasterGain ((float) gain);

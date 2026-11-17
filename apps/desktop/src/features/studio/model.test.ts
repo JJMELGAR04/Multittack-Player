@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { SectionRecord } from "@/lib/ipc/types";
 import {
+  parseDbInput,
   moveItem,
   barBeat,
   effectiveGains,
   meterFraction,
+  dbToFader,
+  faderToDb,
   textOn,
   dbToGain,
   formatBpm,
@@ -59,6 +62,22 @@ describe("volume", () => {
   });
 });
 
+describe("typed volume", () => {
+  it("accepts decimals with comma or point, signs and -inf, clamped to -60..+8", () => {
+    expect(parseDbInput("-3,5")).toBe(-3.5);
+    expect(parseDbInput("−6.5")).toBe(-6.5);
+    expect(parseDbInput("+8")).toBe(8);
+    expect(parseDbInput("12")).toBe(8);
+    expect(parseDbInput("0")).toBe(0);
+    expect(parseDbInput(" -2.26 dB ")).toBe(-2.3);
+    expect(parseDbInput("-inf")).toBe(-60);
+    expect(parseDbInput("-75")).toBe(-60);
+    expect(parseDbInput("abc")).toBeNull();
+    expect(parseDbInput("")).toBeNull();
+    expect(parseDbInput("1.2.3")).toBeNull();
+  });
+});
+
 describe("tempo", () => {
   it("classifies time-stretch transparency", () => {
     expect(tempoQuality(1)).toBe("original");
@@ -87,6 +106,25 @@ describe("track order", () => {
 });
 
 describe("mixer and meters", () => {
+  it("puts 0 dB in the middle of the fader and round-trips", () => {
+    expect(dbToFader(0)).toBe(0.5);
+    expect(dbToFader(8)).toBe(1);
+    expect(dbToFader(-60)).toBe(0);
+    expect(dbToFader(4)).toBeCloseTo(0.75, 6);
+    expect(faderToDb(0.5)).toBe(0);
+    expect(faderToDb(0.501)).toBe(0); // detent around 0 dB
+    expect(faderToDb(0)).toBe(-60);
+    expect(faderToDb(1)).toBe(8);
+    for (const db of [-45, -32, -20, -12, -6.5, -3, 1.5, 6]) expect(faderToDb(dbToFader(db))).toBeCloseTo(db, 1);
+    // monotonic: higher on the fader is always louder
+    let prev = -Infinity;
+    for (let p = 0; p <= 1; p += 0.01) {
+      const d = faderToDb(p);
+      expect(d).toBeGreaterThanOrEqual(prev);
+      prev = d;
+    }
+  });
+
   it("applies mute and solo like a console", () => {
     expect(effectiveGains([0, 0, -6], [false, true, false], [false, false, false])).toEqual([1, 0, dbToGain(-6)]);
     // Solo: only soloed tracks sound, even if muted ones exist.
@@ -96,7 +134,7 @@ describe("mixer and meters", () => {
 
   it("maps peaks to the meter scale and finds bar/beat", () => {
     expect(meterFraction(0)).toBe(0);
-    expect(meterFraction(1)).toBeCloseTo(60 / 66, 6);
+    expect(meterFraction(1)).toBeCloseTo(60 / 68, 6);
     expect(meterFraction(10)).toBe(1);
     expect(barBeat(0, 96, 0, 4)).toEqual({ bar: 1, beat: 1 });
     expect(barBeat(2.5 * 3 + 0.625 * 2 + 0.01, 96, 0, 4)).toEqual({ bar: 4, beat: 3 });

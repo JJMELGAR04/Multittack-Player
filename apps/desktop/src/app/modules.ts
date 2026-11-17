@@ -34,7 +34,7 @@ export const MODULES: readonly AppModule[] = [
     id: "songs",
     path: "/songs",
     label: "Songs",
-    description: "Biblioteca de canciones: crear, importar y organizar.",
+    description: "Biblioteca de canciones: buscar, ordenar, abrir, renombrar y quitar.",
     icon: Music,
     phase: 3,
   },

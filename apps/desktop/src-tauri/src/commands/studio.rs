@@ -4,7 +4,10 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Mutex;
 
-use liveplayer_db::{Database, NewSongMeta, NewTrack, SectionRecord, SongRecord, SongSummary, SongTempo, TrackOrder, beats_per_bar};
+use liveplayer_db::{
+    Database, LibrarySong, NewSongMeta, NewTrack, SectionRecord, SongRecord, SongSummary, SongTempo, TrackMix, TrackOrder,
+    beats_per_bar,
+};
 use liveplayer_engine::{Engine, Meters, OutputInfo, OutputMode, SongStatus, TrackRequest, TransportState, engine_role};
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -122,12 +125,22 @@ pub(crate) fn load_into_engine(engine: &Engine, song: &SongRecord) -> CommandRes
 
 const OUTPUT_MODE_KEY: &str = "output.mode";
 const MONITOR_GAIN_KEY: &str = "output.monitorGain";
+const MAIN_GAIN_KEY: &str = "output.mainGain";
+/// +12 dB: faders go to +8 dB, the rest is headroom for the engine's limiter.
+const MAX_GAIN: f64 = 4.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OutputSettings {
     pub mode: OutputMode,
     pub monitor_gain: f64,
+    /// PA (instruments bus) master volume, linear.
+    #[serde(default = "unity")]
+    pub main_gain: f64,
+}
+
+fn unity() -> f64 {
+    1.0
 }
 
 fn read_output_settings(db: &Database) -> OutputSettings {
@@ -137,14 +150,15 @@ fn read_output_settings(db: &Database) -> OutputSettings {
         .flatten()
         .and_then(|v| serde_json::from_str::<OutputMode>(&v).ok())
         .unwrap_or(OutputMode::Stereo);
-    let monitor_gain = db
-        .get_setting(MONITOR_GAIN_KEY)
-        .ok()
-        .flatten()
-        .and_then(|v| v.parse::<f64>().ok())
-        .filter(|g| (0.0..=2.0).contains(g))
-        .unwrap_or(1.0);
-    OutputSettings { mode, monitor_gain }
+    let gain = |key: &str| {
+        db.get_setting(key)
+            .ok()
+            .flatten()
+            .and_then(|v| v.parse::<f64>().ok())
+            .filter(|g| (0.0..=MAX_GAIN).contains(g))
+            .unwrap_or(1.0)
+    };
+    OutputSettings { mode, monitor_gain: gain(MONITOR_GAIN_KEY), main_gain: gain(MAIN_GAIN_KEY) }
 }
 
 /// Applies the saved routing (called after the device opens with a song load).
@@ -152,6 +166,7 @@ fn read_output_settings(db: &Database) -> OutputSettings {
 pub(crate) fn apply_output_settings(engine: &Engine, db: &Database) {
     let s = read_output_settings(db);
     let _ = engine.set_monitor_gain(s.monitor_gain);
+    let _ = engine.set_master_gain(s.main_gain);
     if engine.set_output_mode(s.mode).is_err() {
         let _ = engine.set_output_mode(OutputMode::Stereo);
     }
@@ -164,16 +179,73 @@ pub fn studio_output_settings(db: State<'_, DbState>) -> CommandResult<OutputSet
 
 #[tauri::command]
 pub fn studio_set_output(engine: State<'_, Engine>, db: State<'_, DbState>, settings: OutputSettings) -> CommandResult<()> {
-    if !(0.0..=2.0).contains(&settings.monitor_gain) {
-        return Err(CommandError::invalid("volumen de monitoreo fuera de rango"));
+    if !(0.0..=MAX_GAIN).contains(&settings.monitor_gain) || !(0.0..=MAX_GAIN).contains(&settings.main_gain) {
+        return Err(CommandError::invalid("volumen fuera de rango"));
     }
     engine.open_default_output()?;
     engine.set_output_mode(settings.mode)?;
     engine.set_monitor_gain(settings.monitor_gain)?;
+    engine.set_master_gain(settings.main_gain)?;
     let db = lock(&db)?;
     db.set_setting(OUTPUT_MODE_KEY, &serde_json::to_string(&settings.mode).unwrap_or_else(|_| "\"stereo\"".into()))?;
     db.set_setting(MONITOR_GAIN_KEY, &settings.monitor_gain.to_string())?;
+    db.set_setting(MAIN_GAIN_KEY, &settings.main_gain.to_string())?;
     Ok(())
+}
+
+/// Saves one track's fader / mute / solo with the song.
+#[tauri::command]
+pub fn studio_set_track_mix(db: State<'_, DbState>, song_id: i64, position: u32, mix: TrackMix) -> CommandResult<()> {
+    Ok(lock(&db)?.set_track_mix(song_id, position, &mix)?)
+}
+
+// ---- Song library ------------------------------------------------------------
+
+#[tauri::command]
+pub fn library_songs(db: State<'_, DbState>) -> CommandResult<Vec<LibrarySong>> {
+    Ok(lock(&db)?.library()?)
+}
+
+#[tauri::command]
+pub fn library_rename(db: State<'_, DbState>, song_id: i64, title: String) -> CommandResult<()> {
+    Ok(lock(&db)?.rename_song(song_id, &title)?)
+}
+
+/// Removes a song from the library. Audio files are deleted only when they live
+/// in LIVEPLAYER's own library folder (songs imported from a zip) and no other
+/// song uses them; files the user picked elsewhere are never touched.
+#[tauri::command]
+pub fn library_delete(
+    app: tauri::AppHandle,
+    engine: State<'_, Engine>,
+    db: State<'_, DbState>,
+    current: State<'_, CurrentSong>,
+    song_id: i64,
+) -> CommandResult<u32> {
+    if *lock(&current.0)? == Some(song_id) {
+        let _ = engine.stop();
+        *lock(&current.0)? = None;
+    }
+    let mut db = lock(&db)?;
+    let files = db.delete_song(song_id)?;
+    let library = crate::data_dir(&app).ok().map(|d| d.join("library")).and_then(|l| l.canonicalize().ok());
+    let mut removed = 0u32;
+    let mut folders = std::collections::BTreeSet::new();
+    if let Some(library) = library {
+        for f in &files {
+            let Ok(path) = Path::new(f).canonicalize() else { continue };
+            if path.starts_with(&library) && !db.file_in_use(f)? && std::fs::remove_file(&path).is_ok() {
+                removed += 1;
+                if let Some(parent) = path.parent().filter(|p| *p != library.as_path()) {
+                    folders.insert(parent.to_path_buf());
+                }
+            }
+        }
+        for dir in folders {
+            let _ = std::fs::remove_dir(&dir); // only succeeds when empty
+        }
+    }
+    Ok(removed)
 }
 
 /// Audition helper: per-track gain (0 mutes, 1 normal).
@@ -287,8 +359,20 @@ pub struct StudioStatus {
 }
 
 #[tauri::command]
-pub fn studio_status(engine: State<'_, Engine>, current: State<'_, CurrentSong>) -> CommandResult<StudioStatus> {
-    Ok(StudioStatus { song_id: *lock(&current.0)?, engine: engine.song_status()? })
+pub fn studio_status(
+    engine: State<'_, Engine>,
+    db: State<'_, DbState>,
+    current: State<'_, CurrentSong>,
+) -> CommandResult<StudioStatus> {
+    let song_id = *lock(&current.0)?;
+    let status = engine.song_status()?;
+    // Remember the length of the loaded song for the library.
+    if let (Some(id), Some(song)) = (song_id, status.song.as_ref())
+        && status.state == "ready"
+    {
+        let _ = lock(&db)?.set_song_duration(id, song.duration_sec);
+    }
+    Ok(StudioStatus { song_id, engine: status })
 }
 
 /// Waveform overview as raw bytes (ArrayBuffer on the JS side).
