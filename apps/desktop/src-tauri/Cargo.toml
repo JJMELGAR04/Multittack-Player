@@ -19,3 +19,4 @@ serde_json.workspace = true
 thiserror.workspace = true
 liveplayer-engine = { path = "../../../crates/liveplayer-engine" }
 liveplayer-db = { path = "../../../crates/liveplayer-db" }
+tauri-plugin-dialog = "2"

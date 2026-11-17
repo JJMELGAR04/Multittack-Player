@@ -34,7 +34,14 @@ describe("navigation", () => {
     expect(screen.getByText(/fuera de la aplicación de escritorio/)).toBeTruthy();
   });
 
-  it.each(MODULES.filter((m) => m.path !== "/"))("renders planned module $label", (m) => {
+  it("renders the Multitrack Studio (phase 2) and warns when there is no engine", () => {
+    renderAt("/studio");
+    expect(screen.getByRole("heading", { level: 1, name: "Multitrack Studio" })).toBeTruthy();
+    expect(screen.getByText(/no hay motor de audio disponible/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: /Abrir pistas/ }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it.each(MODULES.filter((m) => m.path !== "/" && m.id !== "studio"))("renders planned module $label", (m) => {
     renderAt(m.path);
     expect(screen.getByRole("heading", { level: 1, name: m.label })).toBeTruthy();
     expect(screen.getByText(`Planificado para la Fase ${m.phase}`)).toBeTruthy();

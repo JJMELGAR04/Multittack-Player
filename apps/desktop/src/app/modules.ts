@@ -42,7 +42,7 @@ export const MODULES: readonly AppModule[] = [
     id: "studio",
     path: "/studio",
     label: "Multitrack Studio",
-    description: "Reproducción multitrack, mezclador, medidores y waveforms.",
+    description: "Reproducción multitrack sincronizada, tempo, forma de onda y partes de la canción.",
     icon: AudioLines,
     phase: 2,
   },

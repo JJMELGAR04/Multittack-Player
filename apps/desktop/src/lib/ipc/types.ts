@@ -56,3 +56,131 @@ export interface IpcError {
   code: string;
   message: string;
 }
+
+// ---- Phase 2: output device, songs, transport ------------------------------
+
+export interface OutputInfo {
+  open: boolean;
+  typeName?: string;
+  deviceName?: string;
+  sampleRate?: number;
+  bufferSize?: number;
+  outputLatencyMs?: number;
+}
+
+export interface LoadedTrack {
+  name: string;
+  path: string;
+  format: string;
+  sourceSampleRate: number;
+  channels: number;
+  durationSec: number;
+  /** Converted to the device sample rate (r8brain, high quality). */
+  resampled: boolean;
+}
+
+export interface LoadedSong {
+  sampleRate: number;
+  durationSec: number;
+  memoryMB: number;
+  tracks: LoadedTrack[];
+}
+
+export interface DetectedTempo {
+  bpm: number;
+  confidence: number;
+  beatOffsetSec: number;
+  downbeatOffsetSec: number;
+  /** `click` (from the click track), `mix` (from the music) or `user`. */
+  source: string;
+}
+
+export type SectionKind =
+  | "intro"
+  | "verse"
+  | "prechorus"
+  | "chorus"
+  | "bridge"
+  | "interlude"
+  | "outro"
+  | "section";
+
+export interface DetectedSection {
+  startSec: number;
+  endSec: number;
+  kind: SectionKind;
+  label: string;
+  confidence: number;
+}
+
+export interface SongAnalysis {
+  state: "pending" | "running" | "done" | "error";
+  /** Increments every time an analysis finishes. */
+  revision: number;
+  tempo?: DetectedTempo | null;
+  sections: DetectedSection[];
+}
+
+export interface EngineSongStatus {
+  state: "idle" | "loading" | "ready" | "error";
+  progress: number;
+  error: string;
+  loadId: number;
+  song?: LoadedSong | null;
+  analysis?: SongAnalysis | null;
+}
+
+export interface StudioStatus {
+  songId: number | null;
+  engine: EngineSongStatus;
+}
+
+export interface TrackRecord {
+  position: number;
+  name: string;
+  filePath: string;
+}
+
+export interface SectionRecord {
+  startSec: number;
+  kind: SectionKind;
+  label: string;
+  source: "auto" | "user";
+}
+
+export interface SongTempo {
+  originalBpm: number | null;
+  bpmSource: "none" | "detected" | "user";
+  downbeatOffsetSec: number;
+  targetBpm: number | null;
+}
+
+export interface SongRecord extends SongTempo {
+  id: number;
+  title: string;
+  sectionsInitialized: boolean;
+  lastOpenedAt: string;
+  tracks: TrackRecord[];
+  sections: SectionRecord[];
+}
+
+export interface SongSummary {
+  id: number;
+  title: string;
+  trackCount: number;
+  lastOpenedAt: string;
+}
+
+export interface TransportState {
+  playState: "stopped" | "playing" | "paused";
+  ended: boolean;
+  stretching: boolean;
+  deviceXruns: number | null;
+  positionSec: number;
+  durationSec: number;
+  tempoRatio: number;
+  masterGain: number;
+  audioLoad: number;
+  renderLoad: number;
+  underruns: number;
+}

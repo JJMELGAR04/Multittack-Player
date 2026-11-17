@@ -6,6 +6,13 @@ import type {
   EngineInfo,
   EnginePing,
   IpcError,
+  OutputInfo,
+  SectionRecord,
+  SongRecord,
+  SongSummary,
+  SongTempo,
+  StudioStatus,
+  TransportState,
 } from "./types";
 
 /**
@@ -54,6 +61,30 @@ export const backend = {
   enginePing: (value: number) => call<EnginePing>("engine_ping", { value }),
   audioDiagnostics: () => call<AudioDiagnostics>("audio_diagnostics"),
   databaseStatus: () => call<DatabaseStatus>("database_status"),
+
+  // Multitrack Studio
+  studioOpenFiles: (paths: string[]) => call<SongRecord>("studio_open_files", { paths }),
+  studioOpenSong: (songId: number) => call<SongRecord>("studio_open_song", { songId }),
+  studioRecentSongs: () => call<SongSummary[]>("studio_recent_songs"),
+  studioGetSong: (songId: number) => call<SongRecord | null>("studio_get_song", { songId }),
+  studioStatus: () => call<StudioStatus>("studio_status"),
+  /** Waveform overview, LP_PEAKS_PER_SECOND (100) bytes per second, 0..255. */
+  studioPeaks: async (track: number) => new Uint8Array(await call<ArrayBuffer>("studio_peaks", { track })),
+  studioDetectSections: (bpm: number, downbeatOffsetSec: number) =>
+    call<void>("studio_detect_sections", { bpm, downbeatOffsetSec }),
+  studioSaveSections: (songId: number, sections: SectionRecord[]) =>
+    call<void>("studio_save_sections", { songId, sections }),
+  studioSaveTempo: (songId: number, tempo: SongTempo) => call<void>("studio_save_tempo", { songId, tempo }),
+  outputInfo: () => call<OutputInfo>("output_info"),
+
+  // Transport
+  play: () => call<void>("transport_play"),
+  pause: () => call<void>("transport_pause"),
+  stop: () => call<void>("transport_stop"),
+  seek: (positionSec: number) => call<void>("transport_seek", { positionSec }),
+  setMasterGain: (gain: number) => call<void>("transport_set_master_gain", { gain }),
+  setTempoRatio: (ratio: number) => call<void>("transport_set_tempo_ratio", { ratio }),
+  transportState: () => call<TransportState>("transport_state"),
 };
 
 export const isNativeAvailable = (): boolean => isTauri();

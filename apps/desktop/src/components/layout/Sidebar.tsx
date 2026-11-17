@@ -40,7 +40,7 @@ export function Sidebar() {
       </ul>
 
       <div className="border-t border-ink-800 px-5 py-3 font-mono text-[11px] text-ink-400">
-        v0.1.0 · Fase 1
+        v0.2.0 · Fase 2
       </div>
     </nav>
   );
