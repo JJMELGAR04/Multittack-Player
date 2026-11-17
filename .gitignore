@@ -41,3 +41,9 @@ Thumbs.db
 third_party/asio/
 third_party/JUCE/
 apps/desktop/e2e-output/
+third_party/signalsmith-stretch/
+third_party/signalsmith-linear/
+third_party/r8brain/
+
+# Generated test audio
+test-audio/

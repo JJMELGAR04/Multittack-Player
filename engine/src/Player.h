@@ -1,0 +1,117 @@
+#pragma once
+
+#include "ChunkRing.h"
+#include "SongRenderer.h"
+
+#include <juce_audio_devices/juce_audio_devices.h>
+
+#include <atomic>
+
+namespace liveplayer
+{
+
+/**
+ * Real-time playback of one song.
+ *
+ * Two threads, decoupled by a lock-free ring (ChunkRing):
+ *  - Render thread (RenderThread): runs SongRenderer ~150 ms ahead of the
+ *    audio output. Heavy work (time-stretching) happens here, so CPU spikes
+ *    are absorbed by the buffer instead of causing dropouts.
+ *  - Audio callback (this object): copies ready chunks to the device, sums
+ *    tracks, applies the master gain and click-free fades. It never locks,
+ *    allocates or touches the disk.
+ *
+ * Control-thread API (play/pause/seek/...) only writes atomics.
+ */
+class Player final : public juce::AudioIODeviceCallback
+{
+public:
+    Player();
+    ~Player() override;
+
+    /** Installs a song. Call only while the player is NOT attached to a device. */
+    void setSong (SongPtr song);
+    SongPtr getSong() const { return song; }
+
+    // ---- control thread ----
+    void play();
+    void pause();
+    void stop();
+    void seek (double positionSec);
+    void setMasterGain (float gain) { masterGainTarget.store (gain); }
+    void setTempoRatio (double ratio);
+
+    struct Snapshot
+    {
+        int playState = 0; // 0 stopped, 1 playing, 2 paused
+        bool ended = false;
+        bool stretching = false;
+        double positionSec = 0.0;
+        double durationSec = 0.0;
+        double tempoRatio = 1.0;
+        double masterGain = 1.0;
+        double renderLoad = 0.0;
+        juce::uint64 underruns = 0;
+        bool sampleRateMismatch = false;
+    };
+    Snapshot snapshot() const;
+
+    // ---- juce::AudioIODeviceCallback (audio thread) ----
+    void audioDeviceIOCallbackWithContext (const float* const* inputChannelData, int numInputChannels,
+                                           float* const* outputChannelData, int numOutputChannels,
+                                           int numSamples, const juce::AudioIODeviceCallbackContext& context) override;
+    void audioDeviceAboutToStart (juce::AudioIODevice* device) override;
+    void audioDeviceStopped() override;
+
+private:
+    class RenderThread;
+    friend class RenderThread;
+
+    enum Request { requestStop = 0, requestPlay = 1, requestPause = 2 };
+    enum class State { idle, waitingForData, fadingIn, playing, fadingOut };
+    enum class AfterFade { pause, stop, seek };
+
+    void discardStaleChunks() noexcept;
+    void beginFadeOut (AfterFade after) noexcept;
+    int renderSubBlock (float* left, float* right, int numSamples) noexcept;
+
+    void finishFadeOut() noexcept;
+
+    SongPtr song;
+    double songSampleRate = 48000.0;
+    double deviceSampleRate = 48000.0;
+    juce::int64 songLength = 0;
+    int numTracks = 0;
+    ChunkRing ring;
+    SongRenderer renderer; // render thread only (after setSong)
+    std::unique_ptr<RenderThread> renderThread;
+    std::atomic<bool> sampleRateMismatch { false };
+
+    // Shared control -> audio/render (atomics only).
+    std::atomic<int> request { requestStop };
+    std::atomic<uint32_t> seekGeneration { 0 };
+    std::atomic<double> seekTarget { 0.0 };  // song samples
+    std::atomic<double> tempoTarget { 1.0 };
+    std::atomic<float> masterGainTarget { 1.0f };
+
+    // Published by the audio / render threads.
+    std::atomic<double> positionSamples { 0.0 };
+    std::atomic<int> publishedState { 0 };
+    std::atomic<bool> ended { false };
+    std::atomic<double> currentRate { 1.0 };
+    std::atomic<bool> stretching { false };
+    std::atomic<double> renderLoad { 0.0 };
+    std::atomic<juce::uint64> underruns { 0 };
+
+    // Audio-thread-only state.
+    State state = State::idle;
+    AfterFade afterFade = AfterFade::pause;
+    uint32_t audioGeneration = 0;
+    int readOffset = 0;   // frames already consumed from the current chunk
+    float fadeGain = 0.0f; // transport fade 0..1
+    float fadeStep = 0.0f;
+    juce::LinearSmoothedValue<float> masterGain { 1.0f };
+    juce::HeapBlock<float> gainScratch;
+};
+
+} // namespace liveplayer

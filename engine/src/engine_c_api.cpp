@@ -4,6 +4,7 @@
 #include "liveplayer_engine.h"
 #include "Engine.h"
 
+#include <cmath>
 #include <cstring>
 #include <exception>
 #include <memory>
@@ -33,6 +34,30 @@ lp_result guarded (lp_engine* engine, Fn&& fn) noexcept
             engine->impl.setLastError ("unknown native exception");
     }
     return LP_ERR_INTERNAL;
+}
+
+/** Two-call pattern helper for byte/string results. */
+lp_result writeOut (const void* data, size_t size, void* buffer, size_t capacity, size_t* outRequired)
+{
+    *outRequired = size;
+    if (buffer == nullptr)
+        return LP_OK;
+    if (capacity < size)
+        return LP_ERR_BUFFER_TOO_SMALL;
+    if (size > 0)
+        std::memcpy (buffer, data, size);
+    return LP_OK;
+}
+
+lp_result writeJson (const juce::String& json, char* buffer, size_t capacity, size_t* outRequired)
+{
+    const auto utf8 = json.toStdString();
+    return writeOut (utf8.c_str(), utf8.size() + 1, buffer, capacity, outRequired);
+}
+
+bool validBuffer (const void* buffer, size_t capacity, const size_t* outRequired)
+{
+    return outRequired != nullptr && (buffer != nullptr || capacity == 0);
 }
 
 int juceInitCount = 0; // guarded: create/destroy only on the control thread
@@ -117,22 +142,177 @@ lp_result lp_engine_ping (lp_engine* engine, int64_t value, int64_t* out_value)
     });
 }
 
-lp_result lp_engine_describe_audio_devices (lp_engine* engine,
-                                            char* buffer,
-                                            size_t capacity,
-                                            size_t* out_required)
+lp_result lp_engine_describe_audio_devices (lp_engine* engine, char* buffer, size_t capacity, size_t* out_required)
 {
-    if (engine == nullptr || out_required == nullptr || (buffer == nullptr && capacity != 0))
+    if (engine == nullptr || ! validBuffer (buffer, capacity, out_required))
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] { return writeJson (engine->impl.describeAudioDevicesJson(), buffer, capacity, out_required); });
+}
+
+lp_result lp_engine_open_default_output (lp_engine* engine)
+{
+    if (engine == nullptr)
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] { return engine->impl.openDefaultOutput() ? LP_OK : LP_ERR_INTERNAL; });
+}
+
+lp_result lp_engine_get_output_info (lp_engine* engine, char* buffer, size_t capacity, size_t* out_required)
+{
+    if (engine == nullptr || ! validBuffer (buffer, capacity, out_required))
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] { return writeJson (engine->impl.getOutputInfoJson(), buffer, capacity, out_required); });
+}
+
+lp_result lp_engine_load_song (lp_engine* engine, const char* request_json)
+{
+    if (engine == nullptr || request_json == nullptr)
         return LP_ERR_INVALID_ARGUMENT;
 
     return guarded (engine, [&] {
-        const auto json = engine->impl.describeAudioDevicesJson().toStdString();
-        *out_required = json.size() + 1;
+        const auto parsed = juce::JSON::parse (juce::String::fromUTF8 (request_json));
+        const auto* tracks = parsed.getProperty ("tracks", {}).getArray();
+        if (tracks == nullptr || tracks->isEmpty())
+        {
+            engine->impl.setLastError ("Solicitud inválida: se esperaba {\"tracks\":[...]}");
+            return LP_ERR_INVALID_ARGUMENT;
+        }
 
-        if (buffer == nullptr || capacity < json.size() + 1)
-            return buffer == nullptr ? LP_OK : LP_ERR_BUFFER_TOO_SMALL;
+        std::vector<liveplayer::TrackRequest> requests;
+        for (const auto& t : *tracks)
+        {
+            liveplayer::TrackRequest r;
+            r.path = t.getProperty ("path", {}).toString().toStdString();
+            r.name = t.getProperty ("name", {}).toString().toStdString();
+            if (r.path.empty())
+            {
+                engine->impl.setLastError ("Solicitud inválida: pista sin \"path\"");
+                return LP_ERR_INVALID_ARGUMENT;
+            }
+            requests.push_back (std::move (r));
+        }
+        return engine->impl.loadSong (std::move (requests)) ? LP_OK : LP_ERR_INTERNAL;
+    });
+}
 
-        std::memcpy (buffer, json.c_str(), json.size() + 1);
+lp_result lp_engine_get_song_status (lp_engine* engine, char* buffer, size_t capacity, size_t* out_required)
+{
+    if (engine == nullptr || ! validBuffer (buffer, capacity, out_required))
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] { return writeJson (engine->impl.getSongStatusJson(), buffer, capacity, out_required); });
+}
+
+lp_result lp_engine_get_peaks (lp_engine* engine, int32_t track, uint8_t* buffer, size_t capacity, size_t* out_required)
+{
+    if (engine == nullptr || ! validBuffer (buffer, capacity, out_required))
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] {
+        std::vector<juce::uint8> peaks;
+        if (! engine->impl.getPeaks (track, peaks))
+        {
+            engine->impl.setLastError ("No hay canción cargada o la pista no existe.");
+            return LP_ERR_INVALID_STATE;
+        }
+        return writeOut (peaks.data(), peaks.size(), buffer, capacity, out_required);
+    });
+}
+
+lp_result lp_engine_detect_sections (lp_engine* engine, double bpm, double downbeat_offset_sec)
+{
+    if (engine == nullptr || ! std::isfinite (bpm) || ! std::isfinite (downbeat_offset_sec) || bpm > 400.0)
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] { return engine->impl.detectSections (bpm, downbeat_offset_sec) ? LP_OK : LP_ERR_INVALID_STATE; });
+}
+
+#define LP_REQUIRE_SONG(engine)                                           \
+    if (! (engine)->impl.hasSong())                                       \
+    {                                                                     \
+        (engine)->impl.setLastError ("No hay ninguna canción cargada.");  \
+        return LP_ERR_INVALID_STATE;                                      \
+    }
+
+lp_result lp_engine_play (lp_engine* engine)
+{
+    if (engine == nullptr)
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] {
+        LP_REQUIRE_SONG (engine);
+        engine->impl.getPlayer().play();
+        return LP_OK;
+    });
+}
+
+lp_result lp_engine_pause (lp_engine* engine)
+{
+    if (engine == nullptr)
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] {
+        LP_REQUIRE_SONG (engine);
+        engine->impl.getPlayer().pause();
+        return LP_OK;
+    });
+}
+
+lp_result lp_engine_stop (lp_engine* engine)
+{
+    if (engine == nullptr)
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] {
+        LP_REQUIRE_SONG (engine);
+        engine->impl.getPlayer().stop();
+        return LP_OK;
+    });
+}
+
+lp_result lp_engine_seek (lp_engine* engine, double position_sec)
+{
+    if (engine == nullptr || ! std::isfinite (position_sec))
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] {
+        LP_REQUIRE_SONG (engine);
+        engine->impl.getPlayer().seek (position_sec);
+        return LP_OK;
+    });
+}
+
+lp_result lp_engine_set_master_gain (lp_engine* engine, double gain)
+{
+    if (engine == nullptr || ! std::isfinite (gain) || gain < 0.0 || gain > 2.0)
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] {
+        engine->impl.getPlayer().setMasterGain ((float) gain);
+        return LP_OK;
+    });
+}
+
+lp_result lp_engine_set_tempo_ratio (lp_engine* engine, double ratio)
+{
+    if (engine == nullptr || ! std::isfinite (ratio) || ratio < 0.5 || ratio > 2.0)
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] {
+        engine->impl.getPlayer().setTempoRatio (ratio);
+        return LP_OK;
+    });
+}
+
+lp_result lp_engine_get_transport (lp_engine* engine, lp_transport_state* out_state)
+{
+    if (engine == nullptr || out_state == nullptr)
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] {
+        const auto s = engine->impl.getPlayer().snapshot();
+        const auto extras = engine->impl.getTransportExtras();
+        *out_state = {};
+        out_state->play_state = s.playState;
+        out_state->ended = s.ended ? 1 : 0;
+        out_state->stretching = s.stretching ? 1 : 0;
+        out_state->device_xruns = extras.deviceXruns;
+        out_state->position_sec = s.positionSec;
+        out_state->duration_sec = s.durationSec;
+        out_state->tempo_ratio = s.tempoRatio;
+        out_state->master_gain = s.masterGain;
+        out_state->audio_load = extras.audioLoad;
+        out_state->render_load = s.renderLoad;
+        out_state->underruns = s.underruns;
         return LP_OK;
     });
 }
