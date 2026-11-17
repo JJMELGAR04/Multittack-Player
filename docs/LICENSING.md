@@ -10,7 +10,10 @@ LIVEPLAYER se distribuye bajo **GNU AGPL-3.0-or-later** (texto completo en [`LIC
 | Componente | Licencia | ¿Gratuito? | Observaciones |
 |---|---|---|---|
 | JUCE 9.0.5 | AGPLv3 **o** JUCE EULA comercial | Sí (con AGPLv3) | ✅ **Decidido (2026-11-16):** se usa JUCE bajo AGPLv3. |
-| Tauri 2 | MIT / Apache-2.0 | Sí | |
+| Signalsmith Stretch 1.4.0 + Signalsmith Linear 0.6.4 | MIT | Sí | Cambio de tempo sin alterar el tono (fase 2). |
+| r8brain-free-src 6.5 | MIT | Sí | Conversión de frecuencia de muestreo de alta calidad. Créditos solicitados por el autor: *"Sample rate converter designed by Aleksey Vaneev of Voxengo"*. |
+| Decodificador MP3 de JUCE | AGPLv3 (con JUCE) | Sí | Las patentes de MP3 vencieron en 2017. |
+| Tauri 2 + tauri-plugin-dialog | MIT / Apache-2.0 | Sí | El plugin solo se usa para el diálogo nativo de abrir archivos. |
 | React, React Router, lucide-react | MIT / ISC | Sí | |
 | Tailwind CSS, Vite, Vitest | MIT | Sí | |
 | TypeScript | Apache-2.0 | Sí | |
