@@ -107,8 +107,13 @@ pub(crate) fn load_into_engine(engine: &Engine, song: &SongRecord) -> CommandRes
     if !missing.is_empty() {
         return Err(CommandError::invalid(format!("faltan archivos de esta canción: {}", missing.join(", "))));
     }
-    let tracks: Vec<TrackRequest> = song
-        .tracks
+    engine.load_song(&track_requests(song), song.original_bpm, beats_per_bar(&song.time_signature))?;
+    Ok(())
+}
+
+/// What the engine needs to load (or preload) a song.
+pub(crate) fn track_requests(song: &SongRecord) -> Vec<TrackRequest> {
+    song.tracks
         .iter()
         .map(|t| TrackRequest {
             path: t.file_path.clone(),
@@ -116,9 +121,7 @@ pub(crate) fn load_into_engine(engine: &Engine, song: &SongRecord) -> CommandRes
             role: Some(engine_role(&t.role).to_string()),
             bus: Some(t.bus.clone()),
         })
-        .collect();
-    engine.load_song(&tracks, song.original_bpm, beats_per_bar(&song.time_signature))?;
-    Ok(())
+        .collect()
 }
 
 // ---- Output routing settings (persisted) -------------------------------------

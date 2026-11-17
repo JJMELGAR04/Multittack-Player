@@ -9,7 +9,9 @@
 
 pub mod app;
 pub mod audio;
+pub mod backup;
 pub mod database;
 pub mod engine;
 pub mod import;
+pub mod live;
 pub mod studio;

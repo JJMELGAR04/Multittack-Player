@@ -6,6 +6,7 @@
 //!   `PRAGMA user_version`. Each migration runs in a transaction.
 //! - The database is owned by the Rust backend; the UI never touches it.
 
+mod setlists;
 mod songs;
 
 use std::path::{Path, PathBuf};
@@ -16,8 +17,9 @@ use serde::Serialize;
 pub use songs::{
     LibrarySong, NewSongMeta, NewTrack, SECTION_KINDS, SectionRecord, SongRecord, SongSummary, SongTempo, TIME_SIGNATURES,
     TRACK_ROLES, TrackMix, MAX_TRACK_DB, MIN_TRACK_DB,
-    TrackOrder, TrackRecord, beats_per_bar, bus_for_role, default_display_order,
+    TrackOrder, TrackRecord, beats_per_bar, bus_for_role, default_display_order, SongDetails,
 };
+pub use setlists::{SetlistInput, SetlistItem, SetlistItemInput, SetlistRecord, SetlistSummary};
 
 /// Ordered list of migrations. Index + 1 == resulting schema version.
 /// Never edit a migration that has shipped; append a new one instead.
@@ -28,6 +30,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0004_track_order.sql"),
     include_str!("../migrations/0005_mixer_order.sql"),
     include_str!("../migrations/0006_mixer_library.sql"),
+    include_str!("../migrations/0007_setlists.sql"),
 ];
 
 pub const LATEST_SCHEMA_VERSION: u32 = MIGRATIONS.len() as u32;
@@ -153,7 +156,7 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         let status = db.status().unwrap();
         assert_eq!(status.schema_version, LATEST_SCHEMA_VERSION);
-        assert_eq!(status.tables, vec!["app_settings", "song_sections", "song_tracks", "songs"]);
+        assert_eq!(status.tables, vec!["app_settings", "setlist_items", "setlists", "song_sections", "song_tracks", "songs"]);
     }
 
     #[test]
