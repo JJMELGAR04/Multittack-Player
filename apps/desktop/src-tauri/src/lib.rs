@@ -1,12 +1,12 @@
 //! LIVEPLAYER desktop shell: wires the UI (IPC) to the native engine and the
 //! database. Business logic lives in `crates/`, not here.
 
+mod applog;
 mod commands;
 mod error;
 
 use std::sync::Mutex;
 
-use liveplayer_db::Database;
 use liveplayer_engine::Engine;
 use tauri::Manager;
 
@@ -31,10 +31,14 @@ pub fn run() {
             app.manage(engine);
 
             let data_dir = data_dir(app.handle())?;
-            let db = Database::open(data_dir.join(DB_FILE_NAME))?;
+            applog::init(&data_dir.join("logs"));
+            // A damaged library file is set aside and the last daily copy restored.
+            let db = commands::performance::open_with_recovery(&data_dir.join(DB_FILE_NAME), &data_dir)?;
+            commands::performance::daily_backup(&db, &data_dir);
             // The saved audio interface (or the default output) opens now, so
             // Audio Settings and the test tone work before any song is loaded.
             if let Some(engine) = app.try_state::<Engine>() {
+                commands::performance::apply_saved(&engine, &db, &data_dir);
                 commands::audio::apply_saved_device(&engine, &db);
                 commands::studio::apply_output_settings(&engine, &db);
             }
@@ -99,6 +103,12 @@ pub fn run() {
             commands::live::ui_setting_get,
             commands::live::ui_setting_set,
             commands::backup::backup_export,
+            commands::performance::performance_info,
+            commands::performance::performance_set_economy,
+            commands::performance::performance_set_cache_limit,
+            commands::performance::performance_clear_cache,
+            commands::performance::log_ui_error,
+            commands::performance::log_recent,
             commands::backup::backup_import,
             commands::import::studio_import_inspect,
             commands::import::studio_import_preview,

@@ -99,7 +99,7 @@ private:
 SongRenderer::SongRenderer() = default;
 SongRenderer::~SongRenderer() { release(); }
 
-void SongRenderer::prepare (SongPtr newSong)
+void SongRenderer::prepare (SongPtr newSong, bool economy)
 {
     song = std::move (newSong);
     tracks.clear();
@@ -111,7 +111,10 @@ void SongRenderer::prepare (SongPtr newSong)
         // presetDefault (120 ms blocks, 30 ms interval) is the library's
         // higher-quality setting. CPU is not a concern here: rendering runs
         // ahead of time on its own thread.
-        track->stretch.presetDefault (track->channels(), (float) song->sampleRate);
+        if (economy)
+            track->stretch.presetCheaper (track->channels(), (float) song->sampleRate, false);
+        else
+            track->stretch.presetDefault (track->channels(), (float) song->sampleRate);
         // Sung vocals keep their formants (natural voice instead of "chipmunk").
         if (t.voice)
             track->stretch.setFormantSemitones (0, true);
@@ -245,7 +248,7 @@ void SongRenderer::renderDirect (float* const* out, int frames, juce::int64 star
         const auto& audio = tracks[i]->data->audio;
         const int channels = tracks[i]->channels();
         const auto length = (juce::int64) audio.getNumSamples();
-        const float gain = channels == 1 ? monoPanGain : 1.0f;
+        const float gain = channels == 1 && ! tracks[i]->data->dualMono ? monoPanGain : 1.0f;
 
         const auto first = juce::jlimit<juce::int64> (0, frames, -startPos);              // leading silence
         const auto available = juce::jlimit<juce::int64> (0, frames - first, length - (startPos + first));
@@ -310,8 +313,9 @@ void SongRenderer::stretchTrack (size_t i, float* const* out, int frames, int in
     {
         float* pointers[1] = { track.mono.data() };
         track.stretch.process (input, inCount, ChannelOutput { pointers }, frames);
-        juce::FloatVectorOperations::copyWithMultiply (left, pointers[0], monoPanGain, frames);
-        juce::FloatVectorOperations::copyWithMultiply (right, pointers[0], monoPanGain, frames);
+        const float gain = track.data->dualMono ? 1.0f : monoPanGain;
+        juce::FloatVectorOperations::copyWithMultiply (left, pointers[0], gain, frames);
+        juce::FloatVectorOperations::copyWithMultiply (right, pointers[0], gain, frames);
     }
 }
 

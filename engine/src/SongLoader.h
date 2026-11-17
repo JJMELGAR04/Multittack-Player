@@ -48,7 +48,9 @@ constexpr int mp3DecoderDelay = 529;
 class SongLoader final : public juce::Thread
 {
 public:
-    SongLoader (std::vector<TrackRequest> tracks, double targetSampleRate, juce::uint64 loadId);
+    /** `cacheDir`: folder for decoded audio (empty = no cache); kept under `cacheMaxBytes`. */
+    SongLoader (std::vector<TrackRequest> tracks, double targetSampleRate, juce::uint64 loadId,
+                juce::File cacheDir = {}, juce::int64 cacheMaxBytes = 0);
     ~SongLoader() override;
 
     enum class Phase { loading, ready, failed };
@@ -67,11 +69,19 @@ public:
 
 private:
     bool decodeTrack (size_t index, TrackData& out, std::string& error);
+    juce::File cacheFileFor (const juce::File& source) const;
+    bool readCache (const juce::File& source, TrackData& out) const;
+    void writeCache (const juce::File& source, const TrackData& out) const;
+    void trimCache() const;
     void fail (std::string message);
 
     const std::vector<TrackRequest> requests;
     const double sampleRate;
     const juce::uint64 loadId;
+    const juce::File cacheDir;
+    const juce::int64 cacheMaxBytes;
+    const juce::uint32 startedMs = juce::Time::getMillisecondCounter();
+    const juce::Time startedAt = juce::Time::getCurrentTime();
 
     std::atomic<Phase> phase { Phase::loading };
     std::atomic<float> progress { 0.0f };

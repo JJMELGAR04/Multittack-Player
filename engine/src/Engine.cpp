@@ -454,7 +454,7 @@ void Engine::startRateReload()
         songRequests[i].bus = trackBuses[i];
     }
     loaderIsReload = true;
-    loader = std::make_unique<SongLoader> (songRequests, deviceManager.getCurrentAudioDevice()->getCurrentSampleRate(), currentLoadId);
+    loader = std::make_unique<SongLoader> (songRequests, deviceManager.getCurrentAudioDevice()->getCurrentSampleRate(), currentLoadId, cacheDir, cacheMaxBytes);
     loader->startThread();
 }
 
@@ -567,7 +567,7 @@ bool Engine::loadSong (std::vector<TrackRequest> tracks, double bpm, int beats)
     currentLoadId = nextLoadId++;
     loadState = "loading";
     loadError.clear();
-    loader = std::make_unique<SongLoader> (std::move (tracks), deviceManager.getCurrentAudioDevice()->getCurrentSampleRate(), currentLoadId);
+    loader = std::make_unique<SongLoader> (std::move (tracks), deviceManager.getCurrentAudioDevice()->getCurrentSampleRate(), currentLoadId, cacheDir, cacheMaxBytes);
     loader->startThread();
     return true;
 }
@@ -634,7 +634,7 @@ bool Engine::preloadSong (std::vector<TrackRequest> tracks)
     preloadedSong = nullptr;
     preloadRequests = tracks;
     preloadState = "loading";
-    preloader = std::make_unique<SongLoader> (std::move (tracks), deviceManager.getCurrentAudioDevice()->getCurrentSampleRate(), 0);
+    preloader = std::make_unique<SongLoader> (std::move (tracks), deviceManager.getCurrentAudioDevice()->getCurrentSampleRate(), 0, cacheDir, cacheMaxBytes);
     // Low priority: decoding must never compete with the song that is playing.
     preloader->startThread (juce::Thread::Priority::low);
     return true;
@@ -819,6 +819,29 @@ bool Engine::setOutputMode (int mode)
     return true;
 }
 
+void Engine::setCache (juce::File dir, juce::int64 maxBytes)
+{
+    cacheDir = std::move (dir);
+    cacheMaxBytes = juce::jmax<juce::int64> (0, maxBytes);
+}
+
+bool Engine::setEconomy (bool on)
+{
+    if (player.isEconomy() == on)
+        return true;
+    player.setEconomy (on);
+    if (song != nullptr && loader == nullptr)
+    {
+        const auto snap = player.snapshot();
+        reloadPosition = snap.positionSec;
+        reloadPlaying = snap.playState == 1;
+        reloadTempo = player.getTempoTarget();
+        reloadTranspose = player.getTranspose();
+        reinstall (song);
+    }
+    return true;
+}
+
 void Engine::finishRateReload()
 {
     auto newSong = loader->getSong();
@@ -826,7 +849,12 @@ void Engine::finishRateReload()
     mixPeaks = loader->takeMixPeaks();
     loader.reset();
     loaderIsReload = false;
+    reinstall (std::move (newSong));
+}
 
+/** Installs `newSong` again keeping position, play state, tempo, key, mix and buses. */
+void Engine::reinstall (SongPtr newSong)
+{
     if (callbackAttached)
         deviceManager.removeAudioCallback (&player);
     player.setSong (newSong);
@@ -876,6 +904,9 @@ juce::String Engine::getSongStatusJson()
         s->setProperty ("sampleRate", song->sampleRate);
         s->setProperty ("durationSec", song->durationSec());
         s->setProperty ("memoryMB", (double) song->memoryBytes() / (1024.0 * 1024.0));
+        s->setProperty ("loadSeconds", song->loadSeconds);
+        s->setProperty ("cachedTracks", song->cachedTracks);
+        s->setProperty ("economy", player.isEconomy());
         juce::Array<juce::var> tracks;
         for (const auto& t : song->tracks)
         {
@@ -887,6 +918,8 @@ juce::String Engine::getSongStatusJson()
             tr->setProperty ("channels", t.sourceChannels);
             tr->setProperty ("durationSec", (double) t.audio.getNumSamples() / song->sampleRate);
             tr->setProperty ("resampled", t.resampled);
+            tr->setProperty ("dualMono", t.dualMono);
+            tr->setProperty ("fromCache", t.fromCache);
             const size_t idx = (size_t) tracks.size();
             tr->setProperty ("role", juce::String (idx < trackRoles.size() ? (trackRoles[idx] == roleClick ? "click" : trackRoles[idx] == roleGuide ? "guide" : "music") : "music"));
             tr->setProperty ("bus", juce::String (idx < trackBuses.size() && trackBuses[idx] == busMonitor ? "monitor" : "main"));

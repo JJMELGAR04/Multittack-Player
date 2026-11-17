@@ -10,6 +10,10 @@ pub struct CommandError {
 
 impl From<liveplayer_engine::EngineError> for CommandError {
     fn from(e: liveplayer_engine::EngineError) -> Self {
+        // Wrong arguments / states are the user's normal mistakes; the rest goes to the log.
+        if !matches!(e, liveplayer_engine::EngineError::InvalidArgument(_) | liveplayer_engine::EngineError::InvalidState(_)) {
+            crate::applog::write("ERROR", &format!("motor: {e}"));
+        }
         Self { code: "engine", message: e.to_string() }
     }
 }
@@ -21,6 +25,9 @@ impl From<liveplayer_db::DbError> for CommandError {
             liveplayer_db::DbError::NotFound(_) => "not_found",
             _ => "database",
         };
+        if code == "database" {
+            crate::applog::write("ERROR", &format!("base de datos: {e}"));
+        }
         Self { code, message: e.to_string() }
     }
 }

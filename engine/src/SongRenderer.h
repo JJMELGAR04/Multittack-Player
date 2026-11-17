@@ -32,7 +32,8 @@ public:
     ~SongRenderer();
 
     /** Allocates everything needed for `song`. Not real-time safe. */
-    void prepare (SongPtr song);
+    /** `economy`: lighter time-stretch settings (modest computers). */
+    void prepare (SongPtr song, bool economy = false);
     void release();
 
     bool isPrepared() const noexcept { return song != nullptr; }

@@ -4,6 +4,7 @@ import { backend, isNativeAvailable } from "@/lib/ipc/client";
 import type { BackupReport } from "@/lib/ipc/types";
 import { actionFor, DEFAULT_SHORTCUTS, keyLabel, keyName, SHORTCUT_ACTIONS, type ShortcutAction } from "@/features/live/model";
 import { useShortcutSettings } from "@/features/live/songView";
+import { PerformanceSection } from "./PerformanceSection";
 
 /** Keys that cannot be assigned (they would break typing or the app). */
 const RESERVED = new Set(["Tab", "Enter", "Delete", "Backspace", "Ctrl+Z", "Ctrl+Y", "Ctrl+Shift+Z", "F5", "Ctrl+R"]);
@@ -92,7 +93,7 @@ export function SettingsPage() {
         <Settings className="text-info-400" size={26} />
         <div>
           <h1 className="text-2xl font-bold">General Settings</h1>
-          <p className="text-sm text-ink-300">Atajos de teclado y copias de seguridad de tu biblioteca.</p>
+          <p className="text-sm text-ink-300">Atajos de teclado, rendimiento y copias de seguridad de tu biblioteca.</p>
         </div>
       </header>
 
@@ -142,6 +143,8 @@ export function SettingsPage() {
           <RotateCcw size={12} /> Volver a los atajos de fábrica
         </button>
       </section>
+
+      <PerformanceSection onMessage={setMessage} />
 
       <section className="rounded-xl border border-ink-800 bg-ink-900/60 p-4">
         <h2 className="mb-1 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-ink-200">

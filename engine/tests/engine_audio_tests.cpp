@@ -2,6 +2,7 @@
 // internals. Uses the generated test songs (tools/generate-test-song.mjs).
 // Usage: liveplayer_engine_audio_tests <test-audio-dir>
 
+#include <cstring>
 #include <functional>
 #include "Analysis.h"
 #include "Limiter.h"
@@ -248,6 +249,99 @@ static void testStretchQuality()
     std::printf ("  at 1.20x: frequency %.2f Hz (input 440), level %.2f dB vs %.2f dB\n", freq, levelStretched, levelIn);
     CHECK (std::abs (freq - 440.0) < 1.0);
     CHECK (std::abs (levelStretched - levelIn) < 1.0);
+}
+
+static SongPtr loadWith (const std::vector<TrackRequest>& req, const juce::File& cache, double& secs)
+{
+    SongLoader loader (req, engineRate, 1, cache, (juce::int64) 4096 * 1024 * 1024);
+    const auto t0 = std::chrono::steady_clock::now();
+    loader.startThread();
+    while (loader.getPhase() == SongLoader::Phase::loading)
+        juce::Thread::sleep (5);
+    secs = std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count();
+    return loader.getPhase() == SongLoader::Phase::ready ? loader.getSong() : nullptr;
+}
+
+static void testDecodedCache()
+{
+    std::printf ("[loader] decoded-audio cache and identical-channel stems\n");
+    const auto cache = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("liveplayer-cache-test");
+    cache.deleteRecursively();
+
+    // A "stereo" stem whose two channels are identical, as many exports are.
+    const auto wav = cache.getSiblingFile ("liveplayer-dualmono.wav");
+    {
+        // 16-bit PCM WAV, 44.1 kHz, both channels identical.
+        const int frames = (int) (3.0 * 44100.0);
+        juce::MemoryOutputStream data;
+        for (int n = 0; n < frames; ++n)
+        {
+            const auto v = (juce::int16) std::lround (16383.0 * std::sin (juce::MathConstants<double>::twoPi * 330.0 * n / 44100.0));
+            data.writeShort (v);
+            data.writeShort (v);
+        }
+        wav.deleteFile();
+        juce::FileOutputStream out (wav);
+        out.write ("RIFF", 4);
+        out.writeInt (36 + (int) data.getDataSize());
+        out.write ("WAVEfmt ", 8);
+        out.writeInt (16);
+        out.writeShort (1);
+        out.writeShort (2);
+        out.writeInt (44100);
+        out.writeInt (44100 * 4);
+        out.writeShort (4);
+        out.writeShort (16);
+        out.write ("data", 4);
+        out.writeInt ((int) data.getDataSize());
+        out.write (data.getData(), data.getDataSize());
+    }
+
+    std::vector<TrackRequest> req;
+    for (const char* n : { "Drums.wav", "Bass.wav", "Keys.wav" })
+        req.push_back ({ testDir.getChildFile ("song").getChildFile (n).getFullPathName().toStdString(), n });
+    req.push_back ({ wav.getFullPathName().toStdString(), "Pad" });
+
+    double first = 0.0, second = 0.0;
+    const auto a = loadWith (req, cache, first);
+    const auto b = loadWith (req, cache, second);
+    CHECK (a != nullptr && b != nullptr);
+    if (a == nullptr || b == nullptr)
+        return;
+    bool identical = a->tracks.size() == b->tracks.size();
+    for (size_t t = 0; identical && t < a->tracks.size(); ++t)
+    {
+        const auto& x = a->tracks[t].audio;
+        const auto& y = b->tracks[t].audio;
+        identical = x.getNumChannels() == y.getNumChannels() && x.getNumSamples() == y.getNumSamples();
+        for (int c = 0; identical && c < x.getNumChannels(); ++c)
+            identical = std::memcmp (x.getReadPointer (c), y.getReadPointer (c), (size_t) x.getNumSamples() * sizeof (float)) == 0;
+    }
+    std::printf ("  first load %.2f s (decoded), second %.2f s (cache, %d of %zu tracks), bit-exact %s\n", first, second, b->cachedTracks,
+                 b->tracks.size(), identical ? "yes" : "NO");
+    CHECK (a->cachedTracks == 0 && b->cachedTracks == (int) b->tracks.size());
+    CHECK (identical);
+
+    // The identical-channel stem is kept as one channel and still sounds the same.
+    const auto& pad = b->tracks.back();
+    CHECK (pad.dualMono && pad.audio.getNumChannels() == 1);
+    SongRenderer r;
+    r.prepare (b);
+    r.seek (0.0, 1.0, 0.0);
+    const auto out = renderChunks (r, (int) b->tracks.size(), 40, 1.0);
+    float peak = 0.0f;
+    for (float v : out.left.back())
+        peak = std::max (peak, std::abs (v));
+    std::printf ("  identical-channel stem: %d channel(s) in memory, output peak %.3f (file 0.500)\n", pad.audio.getNumChannels(), peak);
+    CHECK (std::abs (peak - 0.5f) < 0.01f);
+
+    // A changed file never uses the old cache entry.
+    wav.setLastModificationTime (juce::Time::getCurrentTime() + juce::RelativeTime::minutes (1));
+    double third = 0.0;
+    const auto c = loadWith (req, cache, third);
+    CHECK (c != nullptr && c->cachedTracks == (int) req.size() - 1);
+    cache.deleteRecursively();
+    wav.deleteFile();
 }
 
 static void testTranspose()
@@ -905,6 +999,7 @@ int main (int argc, char** argv)
 
     testTrackRoles();
     testMp3GaplessParser();
+    testDecodedCache();
     testResamplerQuality();
     testDirectPlaybackIsBitExact();
     testStretchSyncAndTiming();

@@ -1,13 +1,18 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { readFileSync } from "node:fs";
 import { fileURLToPath, URL } from "node:url";
+
+const version = (JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as { version: string }).version;
 
 const host = process.env.TAURI_DEV_HOST;
 
 // https://v2.tauri.app/start/frontend/vite/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // Shown in the navigation bar.
+  define: { __APP_VERSION__: JSON.stringify(version) },
   resolve: {
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
   },

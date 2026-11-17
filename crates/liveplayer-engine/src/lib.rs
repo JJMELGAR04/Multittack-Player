@@ -677,6 +677,22 @@ impl Engine {
         })
     }
 
+    /// Decoded-audio cache folder (None = off) and its size limit in MB.
+    pub fn set_cache(&self, dir: Option<&std::path::Path>, max_mb: i64) -> Result<(), EngineError> {
+        self.check_thread()?;
+        let c = CString::new(dir.map(|d| d.to_string_lossy().into_owned()).unwrap_or_default())
+            .map_err(|_| EngineError::InvalidArgument(": ruta con carácter NUL".into()))?;
+        // SAFETY: valid engine pointer and NUL-terminated string; owning thread.
+        self.map(unsafe { ffi::lp_engine_set_cache(self.raw.as_ptr(), c.as_ptr(), max_mb) })
+    }
+
+    /// Economy mode (lighter tempo / key processing for modest computers).
+    pub fn set_economy(&self, on: bool) -> Result<(), EngineError> {
+        self.check_thread()?;
+        // SAFETY: valid engine pointer; owning thread.
+        self.map(unsafe { ffi::lp_engine_set_economy(self.raw.as_ptr(), i32::from(on)) })
+    }
+
     /// Key change of the music tracks in semitones (-12..12); click and cues are never shifted.
     pub fn set_transpose(&self, semitones: f64) -> Result<(), EngineError> {
         self.check_thread()?;

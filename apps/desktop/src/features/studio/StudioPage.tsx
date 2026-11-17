@@ -335,13 +335,20 @@ export function StudioPage() {
                       <dd className="text-right font-mono text-ink-100">{transport?.underruns ?? 0}</dd>
                       <dt className="text-ink-400">Memoria de audio</dt>
                       <dd className="text-right font-mono text-ink-100">{Math.round(loaded.memoryMB)} MB</dd>
+                      <dt className="text-ink-400">Carga de la canción</dt>
+                      <dd className="text-right font-mono text-ink-100" data-load-info>
+                        {loaded.loadSeconds != null ? `${loaded.loadSeconds.toFixed(2).replace(".", ",")} s` : "—"}
+                        {loaded.cachedTracks ? ` · ${loaded.cachedTracks === loaded.tracks.length ? "preparada" : `${loaded.cachedTracks} pistas preparadas`}` : " · decodificada"}
+                      </dd>
+                      <dt className="text-ink-400">Calidad del tempo/tono</dt>
+                      <dd className="text-right font-mono text-ink-100">{loaded.economy ? "económica" : "máxima"}</dd>
                     </dl>
                     <ul className="grid content-start gap-1">
                       {loaded.tracks.map((t) => (
                         <li key={t.path} className="flex justify-between gap-2" title={t.path}>
                           <span className="truncate text-ink-200">{t.name}</span>
                           <span className="shrink-0 font-mono text-ink-400">
-                            {t.format} · {t.sourceSampleRate / 1000} kHz{t.resampled ? " → convertido" : ""} · {t.channels === 1 ? "mono" : "estéreo"}
+                            {t.format} · {t.sourceSampleRate / 1000} kHz{t.resampled ? " → convertido" : ""} · {t.dualMono ? "estéreo idéntico (guardado como mono)" : t.channels === 1 ? "mono" : "estéreo"}
                           </span>
                         </li>
                       ))}

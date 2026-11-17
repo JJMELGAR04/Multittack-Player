@@ -1,9 +1,6 @@
 import { NavLink } from "react-router-dom";
 import { MODULES } from "@/app/modules";
 
-/** Phase whose modules are already functional; later ones are shown dimmed. */
-const CURRENT_PHASE = 5;
-
 /** Main navigation as a horizontal bar at the top of the window. */
 export function TopNav() {
   return (
@@ -15,22 +12,19 @@ export function TopNav() {
 
       <nav aria-label="Navegación principal" className="min-w-0 flex-1">
         <ul className="flex items-center justify-center gap-1">
-          {MODULES.map(({ id, path, label, icon: Icon, phase }) => {
-            const planned = phase > CURRENT_PHASE;
+          {MODULES.map(({ id, path, label, icon: Icon }) => {
             return (
               <li key={id}>
                 <NavLink
                   to={path}
                   end={path === "/"}
-                  title={planned ? `${label} · disponible en la Fase ${phase}` : label}
+                  title={label}
                   className={({ isActive }) =>
                     [
                       "flex h-10 items-center gap-2 rounded-lg px-3 text-[13px] font-medium whitespace-nowrap transition-colors",
                       isActive
                         ? "bg-ink-800 text-ink-100 shadow-[inset_0_-2px_0] shadow-info-400"
-                        : planned
-                          ? "text-ink-400 hover:bg-ink-850 hover:text-ink-300"
-                          : "text-ink-300 hover:bg-ink-850 hover:text-ink-100",
+                        : "text-ink-300 hover:bg-ink-850 hover:text-ink-100",
                     ].join(" ")
                   }
                 >
@@ -43,7 +37,7 @@ export function TopNav() {
         </ul>
       </nav>
 
-      <span className="shrink-0 font-mono text-[11px] text-ink-400">v0.5.0 · Fase 5</span>
+      <span className="shrink-0 font-mono text-[11px] text-ink-400">v{__APP_VERSION__}</span>
     </header>
   );
 }

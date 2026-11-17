@@ -29,7 +29,7 @@
 extern "C" {
 #endif
 
-#define LP_ENGINE_ABI_VERSION 7u
+#define LP_ENGINE_ABI_VERSION 8u
 
 typedef struct lp_engine lp_engine;
 
@@ -313,6 +313,19 @@ lp_result lp_engine_preload_song(lp_engine* engine, const char* request_json);
  * formants. 0 plays the original audio untouched (when the tempo is original).
  */
 lp_result lp_engine_set_transpose(lp_engine* engine, double semitones);
+
+/**
+ * Decoded-audio cache: decoding and sample-rate conversion are stored in
+ * `dir` (raw float, bit-exact) so a song opens much faster the next time.
+ * Kept under `max_mb` (least recently used files go first). NULL or "" = off.
+ */
+lp_result lp_engine_set_cache(lp_engine* engine, const char* dir, int64_t max_mb);
+
+/**
+ * Economy mode for modest computers: lighter time-stretch (tempo and key
+ * changes). Re-installs the loaded song keeping position, tempo, key and mix.
+ */
+lp_result lp_engine_set_economy(lp_engine* engine, int32_t on);
 
 /** Snapshot of the transport. */
 lp_result lp_engine_get_transport(lp_engine* engine, lp_transport_state* out_state);

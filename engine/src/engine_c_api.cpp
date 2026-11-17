@@ -443,6 +443,29 @@ lp_result lp_engine_set_transpose (lp_engine* engine, double semitones)
     });
 }
 
+lp_result lp_engine_set_cache (lp_engine* engine, const char* dir, int64_t max_mb)
+{
+    if (engine == nullptr || max_mb < 0)
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] {
+        const auto path = dir != nullptr ? juce::String::fromUTF8 (dir) : juce::String();
+        if (path.isNotEmpty() && ! juce::File::isAbsolutePath (path))
+        {
+            engine->impl.setLastError ("La carpeta de la caché debe ser una ruta completa.");
+            return LP_ERR_INVALID_ARGUMENT;
+        }
+        engine->impl.setCache (path.isEmpty() ? juce::File() : juce::File (path), max_mb * 1024 * 1024);
+        return LP_OK;
+    });
+}
+
+lp_result lp_engine_set_economy (lp_engine* engine, int32_t on)
+{
+    if (engine == nullptr)
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] { return engine->impl.setEconomy (on != 0) ? LP_OK : LP_ERR_INTERNAL; });
+}
+
 lp_result lp_engine_cancel_jump (lp_engine* engine)
 {
     if (engine == nullptr)

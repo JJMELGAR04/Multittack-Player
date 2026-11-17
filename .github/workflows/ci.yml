@@ -1,0 +1,85 @@
+# Builds and tests LIVEPLAYER on Windows and macOS for every push.
+# GitHub-hosted runners are free for public repositories (macOS included),
+# so the Mac version is compiled and tested without owning a Mac.
+name: CI
+
+on:
+  push:
+    branches: ["main", "feature/**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+          - name: macOS
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust and engine builds
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            engine/build
+          key: ${{ runner.os }}-build-${{ hashFiles('Cargo.lock', 'engine/CMakeLists.txt') }}
+          restore-keys: ${{ runner.os }}-build-
+
+      # Windows: ASIO SDK (Steinberg, GPLv3 option). If the download fails the
+      # engine is simply built with WASAPI only.
+      - name: ASIO SDK
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        run: node tools/fetch-asio-sdk.mjs
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Generate test audio
+        run: node tools/generate-test-song.mjs test-audio
+
+      - name: Engine (C++) - build
+        run: |
+          cmake -S engine -B engine/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build engine/build --config Release --parallel
+
+      - name: Engine (C++) - tests (ABI, audio, sync, key changes, cache, soak)
+        run: ctest --test-dir engine/build -C Release --output-on-failure
+
+      - name: Rust - tests
+        run: cargo test -p liveplayer-db -p liveplayer-engine -p liveplayer-desktop
+
+      - name: Interface - typecheck and tests
+        run: |
+          npm run typecheck
+          npm test
+
+      - name: App - build (frontend + desktop executable)
+        run: |
+          npm run build -w apps/desktop
+          cargo build -p liveplayer-desktop --release
