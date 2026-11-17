@@ -1,5 +1,5 @@
-import { Headphones, Speaker } from "lucide-react";
-import type { CSSProperties } from "react";
+import { GripHorizontal, Headphones, Speaker } from "lucide-react";
+import { useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import type { Bus, TrackRole } from "@/lib/ipc/types";
 import { Meter } from "./Meter";
 import { formatDb, MAX_DB, MIN_DB, ROLE_COLORS, textOn } from "./model";
@@ -13,6 +13,14 @@ export interface MixerTrack {
 }
 
 const FADER_H = 140;
+const STRIP_W = 80;
+
+interface GripHandlers {
+  onPointerDown: (e: ReactPointerEvent<HTMLButtonElement>) => void;
+  onPointerMove: (e: ReactPointerEvent<HTMLButtonElement>) => void;
+  onPointerUp: () => void;
+  onPointerCancel: () => void;
+}
 
 /** Vertical fader made from a native range input (keyboard + wheel accessible). */
 function Fader({ value, onChange, label }: { value: number; onChange: (db: number) => void; label: string }) {
@@ -64,18 +72,36 @@ interface StripProps {
   wide?: boolean;
   footnote?: string;
   number?: number;
+  /** Drag handle (track strips only). */
+  grip?: GripHandlers;
+  dragX?: number;
 }
 
-function Strip({ name, color, db, onDb, read, badge, mute, solo, onMute, onSolo, wide, footnote, number }: StripProps) {
+function Strip({ name, color, db, onDb, read, badge, mute, solo, onMute, onSolo, wide, footnote, number, grip, dragX }: StripProps) {
+  const dragging = dragX !== undefined;
   return (
     <div
-      className={`relative flex shrink-0 flex-col items-center gap-1.5 border-r border-black/60 px-1.5 pt-1.5 ${
+      className={`relative flex shrink-0 flex-col items-center gap-1.5 border-r border-black/60 px-1.5 pt-1 ${
         wide ? "w-28 bg-gradient-to-b from-ink-800 to-ink-850" : "w-[80px] bg-gradient-to-b from-ink-850 to-ink-900"
-      }`}
+      } ${dragging ? "z-10 opacity-90 shadow-[0_6px_20px_rgba(0,0,0,0.8)]" : ""}`}
+      style={{ transform: dragging ? `translateX(${dragX}px)` : undefined }}
       data-strip={name}
     >
       <div className="absolute inset-x-0 top-0 h-0.5" style={{ background: color }} />
-      {number !== undefined && <span className="font-mono text-[9px] text-ink-400">{number}</span>}
+      {grip ? (
+        <button
+          type="button"
+          aria-label={`Arrastrar el canal ${name} para cambiar el orden`}
+          title="Arrastra a la izquierda o a la derecha para cambiar el orden"
+          {...grip}
+          className="flex h-4 w-full cursor-grab touch-none items-center justify-center gap-1 rounded text-ink-400 hover:bg-ink-800 hover:text-ink-100 active:cursor-grabbing"
+        >
+          <GripHorizontal size={12} />
+          <span className="font-mono text-[9px]">{number}</span>
+        </button>
+      ) : (
+        number !== undefined && <span className="font-mono text-[9px] text-ink-400">{number}</span>
+      )}
       <span
         className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${
           badge === "monitor" ? "bg-info-500/20 text-info-400" : "bg-go-500/15 text-go-400"
@@ -120,16 +146,53 @@ interface MixerProps {
   onSolo: (track: number) => void;
   onMaster: (db: number) => void;
   onMonitor: (db: number) => void;
+  /** Moves the strip shown at `from` to position `to` (display indices). */
+  onReorder: (from: number, to: number) => void;
 }
 
 /** Console-style mixer: one strip per track, then the PA and band buses. */
 export function Mixer(p: MixerProps) {
+  const [drag, setDrag] = useState<{ from: number; startX: number; dx: number } | null>(null);
+  const target = drag ? Math.max(0, Math.min(p.tracks.length - 1, drag.from + Math.round(drag.dx / STRIP_W))) : -1;
+
+  const gripFor = (col: number): GripHandlers => ({
+    onPointerDown: (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        // Synthetic pointers (tests) cannot be captured; dragging still works.
+      }
+      setDrag({ from: col, startX: e.clientX, dx: 0 });
+    },
+    onPointerMove: (e) => {
+      if (!drag || drag.from !== col) return;
+      setDrag({ ...drag, dx: e.clientX - drag.startX });
+      // Auto-scroll when dragging near the edges of the mixer.
+      const scroller = e.currentTarget.closest("[data-mixer-scroll]");
+      if (scroller) {
+        const r = scroller.getBoundingClientRect();
+        if (e.clientX < r.left + 30) scroller.scrollLeft -= 10;
+        else if (e.clientX > r.right - 30) scroller.scrollLeft += 10;
+      }
+    },
+    onPointerUp: () => {
+      if (drag && target >= 0 && target !== drag.from) p.onReorder(drag.from, target);
+      setDrag(null);
+    },
+    onPointerCancel: () => setDrag(null),
+  });
+
   return (
-    <div className="flex h-full min-w-0 overflow-x-auto overflow-y-hidden" role="group" aria-label="Mezclador">
-      {p.tracks.map((t, row) => (
+    <div className="flex h-full min-w-0 overflow-x-auto overflow-y-hidden" role="group" aria-label="Mezclador" data-mixer-scroll>
+      <div className="relative flex shrink-0">
+      {p.tracks.map((t, col) => (
         <Strip
           key={t.index}
-          number={row + 1}
+          number={col + 1}
+          grip={gripFor(col)}
+          dragX={drag?.from === col ? drag.dx : undefined}
           name={t.name}
           color={ROLE_COLORS[t.role]}
           db={p.volumesDb[t.index] ?? 0}
@@ -142,6 +205,13 @@ export function Mixer(p: MixerProps) {
           onSolo={() => p.onSolo(t.index)}
         />
       ))}
+      {drag && target >= 0 && target !== drag.from && (
+        <div
+          className="pointer-events-none absolute inset-y-0 z-20 w-0.5 bg-info-400 shadow-[0_0_8px] shadow-info-400"
+          style={{ left: (target > drag.from ? target + 1 : target) * STRIP_W - 1 }}
+        />
+      )}
+      </div>
       <div className="min-w-4 flex-1 bg-ink-950" />
       <div className="flex border-l-2 border-ink-700 shadow-[-6px_0_12px_rgba(0,0,0,0.5)]">
         <Strip

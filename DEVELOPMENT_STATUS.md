@@ -71,6 +71,7 @@ Leyenda: ✅ Implementado y probado · 🟡 Implementado, prueba parcial · ⏳ 
 | **Nuevo diseño del Studio** (barra superior de navegación, vista de pistas, mezclador inferior) | ✅ | Capturas E2E `03b-studio-playing.png` |
 | **Medidores de nivel** reales por pista y por bus (pico con caída y retención) | ✅ | Prueba nativa (valores exactos) + E2E (se mueven al reproducir) |
 | **Arrastrar pistas** desde la agarradera ⠿ de su cabecera para cambiar el orden (el mezclador sigue el mismo orden; se guarda con la canción) | ✅ | Prueba de base de datos + E2E (arrastre real de «Lead» a la primera fila) |
+| **Arrastrar canales del mezclador** a izquierda o derecha (mismo orden que las pistas: mover en una vista mueve en la otra) | ✅ | E2E (arrastre real de «Keys» al primer lugar) |
 | Orden por defecto: **Click primero, Cues segundo**, luego la banda (también en canciones ya guardadas) | ✅ | Migración 4 + E2E |
 | Diseño pulido: barra del Studio en una fila, rejilla de compases y líneas de partes en las pistas, parte actual resaltada, faders de consola | ✅ | Captura E2E |
 | Volumen, mute (M) y solo (S) por pista | ✅ | E2E: M silencia solo esa pista. *Aún no se guardan por canción: eso llega con el mezclador completo (fase 3), junto con el paneo.* |
@@ -87,7 +88,7 @@ Leyenda: ✅ Implementado y probado · 🟡 Implementado, prueba parcial · ⏳ 
 | Rust `liveplayer-engine` | `cargo test -p liveplayer-engine` | ✅ 2/2, incluida una reproducción real en silencio por la tarjeta de sonido |
 | Rust `liveplayer-db` | `cargo test -p liveplayer-db` | ✅ 11/11 |
 | Rust `liveplayer-desktop` | `cargo test -p liveplayer-desktop` | ✅ 4/4 (zip, reconocimiento de pistas, título/BPM) |
-| E2E sobre la app real | `npm run test:e2e -w apps/desktop` | ✅ **44/44** (silenciosa; usa una carpeta de datos aislada, no toca tu biblioteca) |
+| E2E sobre la app real | `npm run test:e2e -w apps/desktop` | ✅ **47/47** (silenciosa; usa una carpeta de datos aislada, no toca tu biblioteca) |
 
 ### Errores encontrados y corregidos durante la fase
 - (diseño) Los medidores se reiniciaban al leerlos y con dos lectores (UI + prueba) perdían golpes cortos → ahora mantienen el pico con caída de ~300 ms y la lectura no los borra.

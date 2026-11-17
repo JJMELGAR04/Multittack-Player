@@ -328,6 +328,7 @@ export function StudioPage() {
                     onSolo={studio.toggleSolo}
                     onMaster={(db) => studio.setGain(dbToGain(db))}
                     onMonitor={(db) => studio.setOutput({ mode: outputMode, monitorGain: dbToGain(db) })}
+                    onReorder={reorder}
                   />
                 )}
                 {dock === "sections" && (

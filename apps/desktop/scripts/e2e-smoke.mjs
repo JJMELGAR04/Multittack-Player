@@ -146,6 +146,23 @@ try {
   const mixerOrder = await evaluate(`[...document.querySelectorAll("[data-strip]")].map(d => d.dataset.strip).slice(0, 5).join(", ")`);
   check("mixer follows the same order", mixerOrder === afterDrag, mixerOrder);
 
+  // Drag the "Keys" mixer strip (last) to the far left.
+  await evaluate(`(async () => {
+    const grip = document.querySelector("[aria-label='Arrastrar el canal Keys para cambiar el orden']");
+    const r = grip.getBoundingClientRect();
+    const y = r.top + r.height / 2, x0 = r.left + r.width / 2;
+    const ev = (type, x) => grip.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 9, button: 0, clientX: x, clientY: y }));
+    ev("pointerdown", x0);
+    for (let k = 1; k <= 12; k++) { ev("pointermove", x0 - k * 30); await new Promise(r => setTimeout(r, 16)); }
+    ev("pointerup", x0 - 360);
+  })()`);
+  await sleep(700);
+  const mixerAfter = await evaluate(`[...document.querySelectorAll("[data-strip]")].map(d => d.dataset.strip).slice(0, 5).join(", ")`);
+  check("drag a mixer strip left/right to reorder", mixerAfter.startsWith("Keys"), mixerAfter);
+  check("track lanes follow the mixer order", (await laneOrder()) === mixerAfter, await laneOrder());
+  const savedAfter = await invoke("studio_get_song", { songId: opened.id });
+  check("mixer order saved with the song", [...savedAfter.tracks].sort((a, b) => a.displayOrder - b.displayOrder).map((tr) => tr.name).join(", ") === mixerAfter);
+
   await clickButton("Reproducir");
   await sleep(1500);
   let t = await transport();
