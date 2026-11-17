@@ -86,6 +86,7 @@ pub struct LibrarySong {
     pub title: String,
     pub artist: String,
     pub song_key: String,
+    pub transpose: i32,
     pub original_bpm: Option<f64>,
     pub target_bpm: Option<f64>,
     pub time_signature: String,
@@ -140,6 +141,8 @@ pub struct SongRecord {
     pub artist: String,
     pub song_key: String,
     pub notes: String,
+    /// Semitones the song is played in (0 = recorded key).
+    pub transpose: i32,
     pub original_bpm: Option<f64>,
     pub bpm_source: String,
     pub downbeat_offset_sec: f64,
@@ -341,7 +344,7 @@ impl Database {
                 "SELECT s.id, s.title, s.original_bpm, s.target_bpm, s.time_signature, s.duration_sec,
                         (SELECT COUNT(*) FROM song_tracks t WHERE t.song_id = s.id),
                         (SELECT COUNT(*) FROM song_sections x WHERE x.song_id = s.id),
-                        s.source_archive, s.created_at, s.last_opened_at, s.artist, s.song_key
+                        s.source_archive, s.created_at, s.last_opened_at, s.artist, s.song_key, s.transpose
                  FROM songs s ORDER BY s.title COLLATE NOCASE, s.id",
             )?
             .query_map([], |r| {
@@ -359,6 +362,7 @@ impl Database {
                     last_opened_at: r.get(10)?,
                     artist: r.get(11)?,
                     song_key: r.get(12)?,
+                    transpose: r.get(13)?,
                 })
             })?
             .collect::<Result<_, _>>()?)
@@ -410,6 +414,15 @@ impl Database {
         if n == 0 { Err(DbError::NotFound(format!("canción {id}"))) } else { Ok(()) }
     }
 
+    /// Key the song is played in, in semitones from the recording (-12..12).
+    pub fn set_song_transpose(&self, id: i64, semitones: i32) -> Result<(), DbError> {
+        if !(-12..=12).contains(&semitones) {
+            return Err(invalid("el cambio de tono va de -12 a +12 semitonos"));
+        }
+        let n = self.conn.execute("UPDATE songs SET transpose = ?2 WHERE id = ?1", params![id, semitones])?;
+        if n == 0 { Err(DbError::NotFound(format!("canción {id}"))) } else { Ok(()) }
+    }
+
     /// Title, artist, key, notes and time signature (Song Editor).
     pub fn set_song_details(&self, id: i64, d: &SongDetails) -> Result<(), DbError> {
         let title = d.title.trim();
@@ -453,7 +466,7 @@ impl Database {
             .conn
             .query_row(
                 "SELECT id, title, original_bpm, bpm_source, downbeat_offset_sec, target_bpm, sections_initialized, last_opened_at,
-                        time_signature, source_archive, artist, song_key, notes
+                        time_signature, source_archive, artist, song_key, notes, transpose
                  FROM songs WHERE id = ?1",
                 [id],
                 |r| {
@@ -471,6 +484,7 @@ impl Database {
                         artist: r.get(10)?,
                         song_key: r.get(11)?,
                         notes: r.get(12)?,
+                        transpose: r.get(13)?,
                         tracks: Vec::new(),
                         sections: Vec::new(),
                     })

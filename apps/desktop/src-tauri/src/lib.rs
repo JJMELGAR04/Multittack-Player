@@ -86,6 +86,8 @@ pub fn run() {
             commands::live::transport_schedule_jump,
             commands::live::transport_cancel_jump,
             commands::live::transport_set_loop,
+            commands::live::transport_set_transpose,
+            commands::live::studio_save_transpose,
             commands::live::studio_preload_song,
             commands::live::studio_set_song_details,
             commands::live::setlist_list,

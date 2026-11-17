@@ -120,6 +120,7 @@ pub(crate) fn track_requests(song: &SongRecord) -> Vec<TrackRequest> {
             name: t.name.clone(),
             role: Some(engine_role(&t.role).to_string()),
             bus: Some(t.bus.clone()),
+            voice: liveplayer_engine::is_voice_role(&t.role),
         })
         .collect()
 }

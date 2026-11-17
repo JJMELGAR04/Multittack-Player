@@ -31,6 +31,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0005_mixer_order.sql"),
     include_str!("../migrations/0006_mixer_library.sql"),
     include_str!("../migrations/0007_setlists.sql"),
+    include_str!("../migrations/0008_transpose.sql"),
 ];
 
 pub const LATEST_SCHEMA_VERSION: u32 = MIGRATIONS.len() as u32;

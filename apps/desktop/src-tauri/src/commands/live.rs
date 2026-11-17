@@ -42,6 +42,20 @@ pub fn studio_preload_song(engine: State<'_, Engine>, db: State<'_, DbState>, so
     Ok(engine.preload_song(&track_requests(&song))?)
 }
 
+// ---- Key changes ---------------------------------------------------------------
+
+/// Plays the music tracks `semitones` up or down (click and cues untouched).
+#[tauri::command]
+pub fn transport_set_transpose(engine: State<'_, Engine>, semitones: f64) -> CommandResult<()> {
+    Ok(engine.set_transpose(semitones)?)
+}
+
+/// Saves the key a song is played in (Multitrack Studio).
+#[tauri::command]
+pub fn studio_save_transpose(db: State<'_, DbState>, song_id: i64, semitones: i32) -> CommandResult<()> {
+    Ok(lock(&db)?.set_song_transpose(song_id, semitones)?)
+}
+
 // ---- Song Editor -------------------------------------------------------------
 
 #[tauri::command]

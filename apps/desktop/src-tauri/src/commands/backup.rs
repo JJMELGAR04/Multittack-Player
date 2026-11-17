@@ -46,6 +46,8 @@ struct SongExport {
     time_signature: String,
     tempo: SongTempo,
     duration_sec: Option<f64>,
+    #[serde(default)]
+    transpose: i32,
     sections: Vec<SectionRecord>,
     tracks: Vec<TrackExport>,
 }
@@ -71,8 +73,8 @@ struct SetlistExport {
     event_date: String,
     place: String,
     notes: String,
-    /// (index into `songs`, notes)
-    items: Vec<(usize, String)>,
+    /// (index into `songs`, notes, key for this setlist)
+    items: Vec<(usize, String, Option<i32>)>,
 }
 
 #[derive(Debug, Serialize)]
@@ -150,6 +152,7 @@ pub(crate) fn export_to(db: &Database, path: &Path) -> CommandResult<BackupRepor
                 target_bpm: song.target_bpm,
             },
             duration_sec: row.duration_sec,
+            transpose: song.transpose,
             sections: song.sections.clone(),
             tracks,
         });
@@ -161,7 +164,11 @@ pub(crate) fn export_to(db: &Database, path: &Path) -> CommandResult<BackupRepor
             event_date: list.event_date,
             place: list.place,
             notes: list.notes,
-            items: list.items.iter().filter_map(|it| index_of.get(&it.song_id).map(|&i| (i, it.notes.clone()))).collect(),
+            items: list
+                .items
+                .iter()
+                .filter_map(|it| index_of.get(&it.song_id).map(|&i| (i, it.notes.clone(), it.transpose)))
+                .collect(),
         });
     }
 
@@ -289,6 +296,9 @@ pub(crate) fn import_from(db: &mut Database, path: &Path, library: &Path) -> Com
         if let Some(d) = s.duration_sec {
             db.set_song_duration(id, d)?;
         }
+        if s.transpose != 0 {
+            db.set_song_transpose(id, s.transpose)?;
+        }
         let order = |key: fn(&TrackExport) -> u32| {
             let mut idx: Vec<u32> = (0..s.tracks.len() as u32).collect();
             idx.sort_by_key(|&p| key(&s.tracks[p as usize]));
@@ -312,7 +322,9 @@ pub(crate) fn import_from(db: &mut Database, path: &Path, library: &Path) -> Com
         let items: Vec<SetlistItemInput> = l
             .items
             .iter()
-            .filter_map(|(i, notes)| ids.get(*i).copied().flatten().map(|song_id| SetlistItemInput { song_id, notes: notes.clone() }))
+            .filter_map(|(i, notes, transpose)| {
+                ids.get(*i).copied().flatten().map(|song_id| SetlistItemInput { song_id, notes: notes.clone(), transpose: *transpose })
+            })
             .collect();
         db.create_setlist(&SetlistInput {
             name: l.name.clone(),
@@ -357,7 +369,7 @@ mod tests {
             event_date: "2026-11-23".into(),
             place: String::new(),
             notes: String::new(),
-            items: vec![SetlistItemInput { song_id: id, notes: "x2".into() }],
+            items: vec![SetlistItemInput { song_id: id, notes: "x2".into(), transpose: Some(-1) }],
         })
         .unwrap();
 
@@ -378,7 +390,7 @@ mod tests {
         assert_eq!(std::fs::read(&song.tracks[1].file_path).unwrap(), b"RIFF-bass");
         assert!(Path::new(&song.tracks[0].file_path).starts_with(&lib));
         let list = b.get_setlist(b.setlists().unwrap()[0].id).unwrap().unwrap();
-        assert_eq!(list.items[0].notes, "x2");
+        assert_eq!((list.items[0].notes.as_str(), list.items[0].transpose), ("x2", Some(-1)));
 
         // Importing again does not duplicate the song.
         let rep = import_from(&mut b, &zip, &lib).unwrap();

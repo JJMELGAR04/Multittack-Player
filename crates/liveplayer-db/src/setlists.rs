@@ -25,6 +25,9 @@ pub struct SetlistSummary {
 pub struct SetlistItem {
     pub song_id: i64,
     pub notes: String,
+    /// Key for this setlist only (None = the song's own `song_transpose`).
+    pub transpose: Option<i32>,
+    pub song_transpose: i32,
     pub title: String,
     pub artist: String,
     pub song_key: String,
@@ -65,6 +68,8 @@ pub struct SetlistItemInput {
     pub song_id: i64,
     #[serde(default)]
     pub notes: String,
+    #[serde(default)]
+    pub transpose: Option<i32>,
 }
 
 const MAX_ITEMS: usize = 200;
@@ -95,6 +100,9 @@ fn check(input: &SetlistInput) -> Result<(), DbError> {
     }
     if input.items.iter().any(|i| i.notes.chars().count() > 1000) {
         return Err(invalid("las notas de una canción admiten hasta 1000 caracteres"));
+    }
+    if input.items.iter().any(|i| i.transpose.is_some_and(|t| !(-12..=12).contains(&t))) {
+        return Err(invalid("el cambio de tono va de -12 a +12 semitonos"));
     }
     Ok(())
 }
@@ -143,7 +151,8 @@ impl Database {
         list.items = self
             .conn
             .prepare(
-                "SELECT i.song_id, i.notes, s.title, s.artist, s.song_key, s.original_bpm, s.target_bpm, s.time_signature, s.duration_sec
+                "SELECT i.song_id, i.notes, s.title, s.artist, s.song_key, s.original_bpm, s.target_bpm, s.time_signature, s.duration_sec,
+                        i.transpose, s.transpose
                  FROM setlist_items i JOIN songs s ON s.id = i.song_id
                  WHERE i.setlist_id = ?1 ORDER BY i.position",
             )?
@@ -158,6 +167,8 @@ impl Database {
                     target_bpm: r.get(6)?,
                     time_signature: r.get(7)?,
                     duration_sec: r.get(8)?,
+                    transpose: r.get(9)?,
+                    song_transpose: r.get(10)?,
                 })
             })?
             .collect::<Result<_, _>>()?;
@@ -213,20 +224,25 @@ impl Database {
             event_date: String::new(),
             place: src.place,
             notes: src.notes,
-            items: src.items.into_iter().map(|i| SetlistItemInput { song_id: i.song_id, notes: i.notes }).collect(),
+            items: src
+                .items
+                .into_iter()
+                .map(|i| SetlistItemInput { song_id: i.song_id, notes: i.notes, transpose: i.transpose })
+                .collect(),
         })
     }
 }
 
 fn insert_items(tx: &rusqlite::Transaction<'_>, setlist_id: i64, items: &[SetlistItemInput]) -> Result<(), DbError> {
-    let mut stmt = tx.prepare("INSERT INTO setlist_items (setlist_id, song_id, position, notes) VALUES (?1, ?2, ?3, ?4)")?;
+    let mut stmt =
+        tx.prepare("INSERT INTO setlist_items (setlist_id, song_id, position, notes, transpose) VALUES (?1, ?2, ?3, ?4, ?5)")?;
     for (pos, item) in items.iter().enumerate() {
         let exists: Option<i64> =
             tx.query_row("SELECT id FROM songs WHERE id = ?1", [item.song_id], |r| r.get(0)).optional()?;
         if exists.is_none() {
             return Err(DbError::NotFound(format!("canción {}", item.song_id)));
         }
-        stmt.execute(params![setlist_id, item.song_id, pos as i64, item.notes])?;
+        stmt.execute(params![setlist_id, item.song_id, pos as i64, item.notes, item.transpose])?;
     }
     Ok(())
 }
@@ -284,14 +300,18 @@ mod tests {
             place: "Templo".into(),
             notes: String::new(),
             items: vec![
-                SetlistItemInput { song_id: b, notes: "coro x2".into() },
-                SetlistItemInput { song_id: a, notes: String::new() },
+                SetlistItemInput { song_id: b, notes: "coro x2".into(), transpose: Some(-2) },
+                SetlistItemInput { song_id: a, notes: String::new(), transpose: None },
             ],
         };
         let id = db.create_setlist(&input).unwrap();
         let list = db.get_setlist(id).unwrap().unwrap();
         assert_eq!(list.items.iter().map(|i| i.title.as_str()).collect::<Vec<_>>(), ["Way Maker", "Ancient"]);
         assert_eq!(list.items[0].notes, "coro x2");
+        assert_eq!((list.items[0].transpose, list.items[1].transpose), (Some(-2), None));
+        db.set_song_transpose(a, 3).unwrap();
+        assert_eq!(db.get_setlist(id).unwrap().unwrap().items[1].song_transpose, 3);
+        assert!(db.set_song_transpose(a, 13).is_err());
         let sum = db.setlists().unwrap();
         assert_eq!(sum[0].song_count, 2);
         assert_eq!(sum[0].total_sec, 500.0);
@@ -299,9 +319,9 @@ mod tests {
         // Reorder + repeat a song.
         let mut changed = input.clone();
         changed.items = vec![
-            SetlistItemInput { song_id: a, notes: String::new() },
-            SetlistItemInput { song_id: b, notes: String::new() },
-            SetlistItemInput { song_id: a, notes: "final".into() },
+            SetlistItemInput { song_id: a, notes: String::new(), transpose: None },
+            SetlistItemInput { song_id: b, notes: String::new(), transpose: None },
+            SetlistItemInput { song_id: a, notes: "final".into(), transpose: Some(1) },
         ];
         db.save_setlist(id, &changed).unwrap();
         assert_eq!(db.get_setlist(id).unwrap().unwrap().items.len(), 3);
@@ -311,7 +331,7 @@ mod tests {
         bad.event_date = "23/11/2026".into();
         assert!(db.save_setlist(id, &bad).is_err());
         bad = changed.clone();
-        bad.items.push(SetlistItemInput { song_id: 999, notes: String::new() });
+        bad.items.push(SetlistItemInput { song_id: 999, notes: String::new(), transpose: None });
         assert!(db.save_setlist(id, &bad).is_err());
         assert_eq!(db.get_setlist(id).unwrap().unwrap().items.len(), 3, "a failed save changes nothing");
 
