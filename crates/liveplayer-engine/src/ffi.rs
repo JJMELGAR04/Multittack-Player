@@ -3,7 +3,7 @@
 
 use std::ffi::{c_char, c_int};
 
-pub const ABI_VERSION: u32 = 2;
+pub const ABI_VERSION: u32 = 3;
 
 #[repr(C)]
 pub struct lp_engine {
@@ -32,6 +32,11 @@ pub struct lp_transport_state {
     pub audio_load: f64,
     pub render_load: f64,
     pub underruns: u64,
+    pub output_mode: i32,
+    pub output_channels: i32,
+    pub monitor_gain: f64,
+    pub main_limiter_gain: f64,
+    pub monitor_limiter_gain: f64,
 }
 
 pub type JsonFn = unsafe extern "C" fn(*mut lp_engine, *mut c_char, usize, *mut usize) -> lp_result;
@@ -76,7 +81,16 @@ unsafe extern "C" {
         capacity: usize,
         out_required: *mut usize,
     ) -> lp_result;
-    pub fn lp_engine_detect_sections(engine: *mut lp_engine, bpm: f64, downbeat_offset_sec: f64) -> lp_result;
+    pub fn lp_engine_detect_sections(
+        engine: *mut lp_engine,
+        bpm: f64,
+        downbeat_offset_sec: f64,
+        beats_per_bar: i32,
+    ) -> lp_result;
+    pub fn lp_engine_set_track_route(engine: *mut lp_engine, track: i32, bus: i32, role: i32) -> lp_result;
+    pub fn lp_engine_set_track_gain(engine: *mut lp_engine, track: i32, gain: f64) -> lp_result;
+    pub fn lp_engine_set_output_mode(engine: *mut lp_engine, mode: i32) -> lp_result;
+    pub fn lp_engine_set_monitor_gain(engine: *mut lp_engine, gain: f64) -> lp_result;
 
     pub fn lp_engine_play(engine: *mut lp_engine) -> lp_result;
     pub fn lp_engine_pause(engine: *mut lp_engine) -> lp_result;

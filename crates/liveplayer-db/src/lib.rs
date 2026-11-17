@@ -13,13 +13,17 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
 
-pub use songs::{NewTrack, SECTION_KINDS, SectionRecord, SongRecord, SongSummary, SongTempo, TrackRecord};
+pub use songs::{
+    NewSongMeta, NewTrack, SECTION_KINDS, SectionRecord, SongRecord, SongSummary, SongTempo, TIME_SIGNATURES, TRACK_ROLES,
+    TrackRecord, beats_per_bar, bus_for_role,
+};
 
 /// Ordered list of migrations. Index + 1 == resulting schema version.
 /// Never edit a migration that has shipped; append a new one instead.
 const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0001_foundation.sql"),
     include_str!("../migrations/0002_songs.sql"),
+    include_str!("../migrations/0003_roles_meter.sql"),
 ];
 
 pub const LATEST_SCHEMA_VERSION: u32 = MIGRATIONS.len() as u32;

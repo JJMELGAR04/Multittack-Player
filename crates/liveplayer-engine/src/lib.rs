@@ -82,6 +82,49 @@ pub struct OutputInfo {
 pub struct TrackRequest {
     pub path: String,
     pub name: String,
+    /// `music`, `click` or `guide` (None = infer from the name).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    /// `main` (instruments) or `monitor` (click / cues). None = from the role.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bus: Option<String>,
+}
+
+/// Engine role for a library role (`click`, `cues`, `drums`...).
+pub fn engine_role(role: &str) -> &'static str {
+    match role {
+        "click" => "click",
+        "cues" => "guide",
+        _ => "music",
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum OutputMode {
+    /// Everything on outputs 1/2 (rehearsal, headphones).
+    Stereo,
+    /// Instruments mono on output 1, click + cues mono on output 2.
+    Split,
+    /// Instruments on 1/2, click + cues on 3/4.
+    Quad,
+}
+
+impl OutputMode {
+    fn code(self) -> i32 {
+        match self {
+            OutputMode::Stereo => 0,
+            OutputMode::Split => 1,
+            OutputMode::Quad => 2,
+        }
+    }
+    fn from_code(c: i32) -> Self {
+        match c {
+            1 => OutputMode::Split,
+            2 => OutputMode::Quad,
+            _ => OutputMode::Stereo,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -94,6 +137,8 @@ pub struct LoadedTrack {
     pub channels: u32,
     pub duration_sec: f64,
     pub resampled: bool,
+    pub role: String,
+    pub bus: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -103,6 +148,10 @@ pub struct LoadedSong {
     pub duration_sec: f64,
     #[serde(rename = "memoryMB")]
     pub memory_mb: f64,
+    pub beats_per_bar: u32,
+    /// Automatic level trim of the instruments bus (dB, <= 0) so the stems never clip.
+    pub main_trim_db: f64,
+    pub monitor_trim_db: f64,
     pub tracks: Vec<LoadedTrack>,
 }
 
@@ -174,6 +223,12 @@ pub struct TransportState {
     pub audio_load: f64,
     pub render_load: f64,
     pub underruns: u64,
+    pub output_mode: OutputMode,
+    pub output_channels: u32,
+    pub monitor_gain: f64,
+    /// Safety limiter gain on each bus (1 = idle).
+    pub main_limiter_gain: f64,
+    pub monitor_limiter_gain: f64,
 }
 
 fn static_str(ptr: *const std::ffi::c_char) -> String {
@@ -298,9 +353,11 @@ impl Engine {
     }
 
     /// Starts loading a song in the background; poll [`Engine::song_status`].
-    pub fn load_song(&self, tracks: &[TrackRequest]) -> Result<(), EngineError> {
+    /// `bpm`: tempo known by the user (None = detect). `beats_per_bar`: bar length.
+    pub fn load_song(&self, tracks: &[TrackRequest], bpm: Option<f64>, beats_per_bar: i32) -> Result<(), EngineError> {
         self.check_thread()?;
-        let request = serde_json::json!({ "tracks": tracks }).to_string();
+        let request =
+            serde_json::json!({ "tracks": tracks, "bpm": bpm.unwrap_or(0.0), "beatsPerBar": beats_per_bar }).to_string();
         let c = CString::new(request).map_err(|_| EngineError::InvalidArgument(": ruta con carácter NUL".into()))?;
         // SAFETY: valid engine pointer and NUL-terminated string; owning thread.
         self.map(unsafe { ffi::lp_engine_load_song(self.raw.as_ptr(), c.as_ptr()) })
@@ -325,11 +382,44 @@ impl Engine {
         Ok(buf)
     }
 
-    /// Re-detects sections with a confirmed tempo (`bpm <= 0` = detected tempo).
-    pub fn detect_sections(&self, bpm: f64, downbeat_offset_sec: f64) -> Result<(), EngineError> {
+    /// Re-detects sections. `bpm <= 0`: detected tempo. `downbeat < 0`: estimate the bar grid.
+    pub fn detect_sections(&self, bpm: f64, downbeat_offset_sec: f64, beats_per_bar: i32) -> Result<(), EngineError> {
         self.check_thread()?;
         // SAFETY: valid engine pointer; owning thread.
-        self.map(unsafe { ffi::lp_engine_detect_sections(self.raw.as_ptr(), bpm, downbeat_offset_sec) })
+        self.map(unsafe { ffi::lp_engine_detect_sections(self.raw.as_ptr(), bpm, downbeat_offset_sec, beats_per_bar) })
+    }
+
+    /// Output bus (`main` / `monitor`) and analysis role (`music` / `click` / `guide`) of a track.
+    pub fn set_track_route(&self, track: i32, bus: &str, role: &str) -> Result<(), EngineError> {
+        self.check_thread()?;
+        let bus = if bus == "monitor" { 1 } else { 0 };
+        let role = match role {
+            "click" => 1,
+            "guide" => 2,
+            _ => 0,
+        };
+        // SAFETY: valid engine pointer; owning thread.
+        self.map(unsafe { ffi::lp_engine_set_track_route(self.raw.as_ptr(), track, bus, role) })
+    }
+
+    /// Per-track gain 0..2 (used to audition one track).
+    pub fn set_track_gain(&self, track: i32, gain: f64) -> Result<(), EngineError> {
+        self.check_thread()?;
+        // SAFETY: valid engine pointer; owning thread.
+        self.map(unsafe { ffi::lp_engine_set_track_gain(self.raw.as_ptr(), track, gain) })
+    }
+
+    pub fn set_output_mode(&self, mode: OutputMode) -> Result<(), EngineError> {
+        self.check_thread()?;
+        // SAFETY: valid engine pointer; owning thread.
+        self.map(unsafe { ffi::lp_engine_set_output_mode(self.raw.as_ptr(), mode.code()) })
+    }
+
+    /// Volume of the click / cues bus, linear 0..2.
+    pub fn set_monitor_gain(&self, gain: f64) -> Result<(), EngineError> {
+        self.check_thread()?;
+        // SAFETY: valid engine pointer; owning thread.
+        self.map(unsafe { ffi::lp_engine_set_monitor_gain(self.raw.as_ptr(), gain) })
     }
 
     pub fn play(&self) -> Result<(), EngineError> {
@@ -391,6 +481,11 @@ impl Engine {
             audio_load: s.audio_load,
             render_load: s.render_load,
             underruns: s.underruns,
+            output_mode: OutputMode::from_code(s.output_mode),
+            output_channels: u32::try_from(s.output_channels).unwrap_or(0),
+            monitor_gain: s.monitor_gain,
+            main_limiter_gain: s.main_limiter_gain,
+            monitor_limiter_gain: s.monitor_limiter_gain,
         })
     }
 }
@@ -490,9 +585,14 @@ mod tests {
 
         let tracks: Vec<TrackRequest> = ["Tone.wav", "Pulse.wav"]
             .iter()
-            .map(|f| TrackRequest { path: dir.join(f).to_string_lossy().into_owned(), name: f.replace(".wav", "") })
+            .map(|f| TrackRequest {
+                path: dir.join(f).to_string_lossy().into_owned(),
+                name: f.replace(".wav", ""),
+                role: None,
+                bus: None,
+            })
             .collect();
-        engine.load_song(&tracks).expect("load");
+        engine.load_song(&tracks, None, 4).expect("load");
 
         let deadline = Instant::now() + Duration::from_secs(30);
         let status = loop {
@@ -510,6 +610,18 @@ mod tests {
         assert_eq!(engine.peaks(-1).expect("mix peaks").len(), 800);
         assert_eq!(engine.peaks(0).expect("track peaks").len(), 800);
         assert!(matches!(engine.peaks(7), Err(EngineError::InvalidState(_))));
+        assert_eq!(song.tracks[1].bus, "main");
+        engine.set_track_route(1, "monitor", "click").unwrap();
+        assert_eq!(engine.song_status().unwrap().song.unwrap().tracks[1].bus, "monitor");
+        engine.set_track_gain(0, 0.0).unwrap();
+        engine.set_track_gain(0, 1.0).unwrap();
+        engine.set_output_mode(OutputMode::Split).unwrap();
+        let t = engine.transport().unwrap();
+        assert_eq!(t.output_mode, OutputMode::Split);
+        if t.output_channels < 4 {
+            assert!(matches!(engine.set_output_mode(OutputMode::Quad), Err(EngineError::InvalidState(_))));
+        }
+        engine.set_output_mode(OutputMode::Stereo).unwrap();
 
         // Silent playback check (master at 0): the transport must advance.
         engine.set_master_gain(0.0).unwrap();
