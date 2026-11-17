@@ -14,6 +14,9 @@ fn main() {
         println!("cargo:rerun-if-changed={}", engine_dir.join(sub).display());
     }
     println!("cargo:rerun-if-env-changed=LIVEPLAYER_JUCE_DIR");
+    println!("cargo:rerun-if-env-changed=LIVEPLAYER_ASIO_SDK_DIR");
+    // ASIO is compiled in when the SDK is present (tools/fetch-asio-sdk.mjs).
+    println!("cargo:rerun-if-changed={}", repo_root.join("third_party/asio").display());
 
     let mut cfg = cmake::Config::new(&engine_dir);
     // Always optimised: real-time audio code must not run unoptimised, and the
@@ -22,6 +25,9 @@ fn main() {
         .define("LIVEPLAYER_ENGINE_BUILD_TESTS", "OFF");
     if let Ok(juce) = std::env::var("LIVEPLAYER_JUCE_DIR") {
         cfg.define("LIVEPLAYER_JUCE_DIR", juce);
+    }
+    if let Ok(asio) = std::env::var("LIVEPLAYER_ASIO_SDK_DIR") {
+        cfg.define("LIVEPLAYER_ASIO_SDK_DIR", asio);
     }
     let dst = cfg.build();
 

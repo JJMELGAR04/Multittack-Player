@@ -29,7 +29,7 @@
 extern "C" {
 #endif
 
-#define LP_ENGINE_ABI_VERSION 4u
+#define LP_ENGINE_ABI_VERSION 5u
 
 typedef struct lp_engine lp_engine;
 
@@ -79,9 +79,44 @@ lp_result lp_engine_ping(lp_engine* engine, int64_t value, int64_t* out_value);
 /**
  * JSON description of the audio back-ends available on this system and their
  * output devices (read-only scan):
- *   {"deviceTypes":[{"name":"Windows Audio","outputDevices":["Speakers (...)"]}]}
+ *   {"deviceTypes":[{"name":"Windows Audio","outputDevices":["Speakers (...)"]}],
+ *    "asioSupported":true}
+ * Driver types on Windows: "Windows Audio" (shared), "Windows Audio (Exclusive
+ * Mode)", "Windows Audio (Low Latency Mode)" and "ASIO" (when built with the SDK).
  */
 lp_result lp_engine_describe_audio_devices(lp_engine* engine, char* buffer, size_t capacity, size_t* out_required);
+
+/**
+ * Capabilities of one device. `request_json` = {"typeName":"...","deviceName":"..."}.
+ * Result: {"available":true,"sampleRates":[44100,48000],"bufferSizes":[64,128],
+ *          "defaultBufferSize":480,"outputChannelNames":["Out 1","Out 2"],
+ *          "hasControlPanel":false}   ("available":false if not connected.)
+ */
+lp_result lp_engine_describe_device(lp_engine* engine, const char* request_json, char* buffer, size_t capacity, size_t* out_required);
+
+/**
+ * Opens and remembers an output device:
+ *   {"typeName":"ASIO","deviceName":"Focusrite USB ASIO","sampleRate":48000,"bufferSize":128}
+ * (sampleRate/bufferSize 0 or absent = device default). Every output channel
+ * of the device is opened. If the device is not connected the default output
+ * is used and the choice is reopened automatically when it appears
+ * (lp_engine_get_output_info reports "usingPreferred":false). A loaded song
+ * is re-decoded for a new sample rate, keeping position, tempo and mix.
+ * On failure the previous device stays open and LP_ERR_INTERNAL is returned.
+ */
+lp_result lp_engine_set_audio_device(lp_engine* engine, const char* request_json);
+
+/**
+ * First device output (0-based) used by each bus. Split mode: one output per
+ * bus (must differ). Stereo modes: that output and the next one.
+ */
+lp_result lp_engine_set_output_channels(lp_engine* engine, int32_t main_first, int32_t monitor_first);
+
+/** Line-check tone (1 kHz, -18 dBFS, 2 s) on one device output (0-based); -1 stops it. */
+lp_result lp_engine_test_tone(lp_engine* engine, int32_t channel);
+
+/** Opens the driver's own control panel (ASIO). LP_ERR_INVALID_STATE if it has none. */
+lp_result lp_engine_show_device_panel(lp_engine* engine);
 
 /* ---- Audio output device (phase 2: system default output) ---- */
 
@@ -93,10 +128,15 @@ lp_result lp_engine_describe_audio_devices(lp_engine* engine, char* buffer, size
 lp_result lp_engine_open_default_output(lp_engine* engine);
 
 /**
- * JSON describing the open output device:
+ * JSON describing the open output device and its health:
  *   {"open":true,"typeName":"Windows Audio","deviceName":"...",
- *    "sampleRate":48000,"bufferSize":480,"outputChannels":2,"outputLatencyMs":20.0}
- * ("open":false and no other fields when no device is open.)
+ *    "sampleRate":48000,"bufferSize":480,"outputChannels":2,"outputLatencyMs":20.0,
+ *    "outputChannelNames":[...],"sampleRates":[...],"bufferSizes":[...],
+ *    "hasControlPanel":false,"xruns":-1,"cpuLoad":0.03,"underruns":0,
+ *    "mainChannel":0,"monitorChannel":1,"outputMode":1,"asioSupported":true,
+ *    "reloading":false,"deviceEvents":0,"lastDeviceEvent":"",
+ *    "preferred":{...},"usingPreferred":true}
+ * Calling it also does the device housekeeping (lost / reconnected device).
  */
 lp_result lp_engine_get_output_info(lp_engine* engine, char* buffer, size_t capacity, size_t* out_required);
 

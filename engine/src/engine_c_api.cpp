@@ -149,6 +149,59 @@ lp_result lp_engine_describe_audio_devices (lp_engine* engine, char* buffer, siz
     return guarded (engine, [&] { return writeJson (engine->impl.describeAudioDevicesJson(), buffer, capacity, out_required); });
 }
 
+lp_result lp_engine_describe_device (lp_engine* engine, const char* request_json, char* buffer, size_t capacity, size_t* out_required)
+{
+    if (engine == nullptr || request_json == nullptr || ! validBuffer (buffer, capacity, out_required))
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] {
+        const auto req = juce::JSON::parse (juce::String::fromUTF8 (request_json));
+        return writeJson (engine->impl.describeDeviceJson (req.getProperty ("typeName", {}).toString(),
+                                                           req.getProperty ("deviceName", {}).toString()),
+                          buffer, capacity, out_required);
+    });
+}
+
+lp_result lp_engine_set_audio_device (lp_engine* engine, const char* request_json)
+{
+    if (engine == nullptr || request_json == nullptr)
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] {
+        const auto req = juce::JSON::parse (juce::String::fromUTF8 (request_json));
+        liveplayer::Engine::DeviceChoice c;
+        c.typeName = req.getProperty ("typeName", {}).toString();
+        c.deviceName = req.getProperty ("deviceName", {}).toString();
+        c.sampleRate = juce::jmax (0.0, (double) req.getProperty ("sampleRate", 0.0));
+        c.bufferSize = juce::jmax (0, (int) req.getProperty ("bufferSize", 0));
+        if (c.typeName.isEmpty() || c.deviceName.isEmpty())
+        {
+            engine->impl.setLastError ("Solicitud inválida: se esperaba {\"typeName\":...,\"deviceName\":...}");
+            return LP_ERR_INVALID_ARGUMENT;
+        }
+        return engine->impl.setAudioDevice (c) ? LP_OK : LP_ERR_INTERNAL;
+    });
+}
+
+lp_result lp_engine_set_output_channels (lp_engine* engine, int32_t main_first, int32_t monitor_first)
+{
+    if (engine == nullptr || main_first < 0 || monitor_first < 0)
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] { return engine->impl.setOutputChannels (main_first, monitor_first) ? LP_OK : LP_ERR_INVALID_ARGUMENT; });
+}
+
+lp_result lp_engine_test_tone (lp_engine* engine, int32_t channel)
+{
+    if (engine == nullptr || channel < -1)
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] { return engine->impl.startTestTone (channel) ? LP_OK : LP_ERR_INVALID_ARGUMENT; });
+}
+
+lp_result lp_engine_show_device_panel (lp_engine* engine)
+{
+    if (engine == nullptr)
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] { return engine->impl.showDeviceControlPanel() ? LP_OK : LP_ERR_INVALID_STATE; });
+}
+
 lp_result lp_engine_open_default_output (lp_engine* engine)
 {
     if (engine == nullptr)

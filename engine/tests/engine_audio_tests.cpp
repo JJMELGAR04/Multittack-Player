@@ -533,6 +533,17 @@ static void testOutputRouting()
     std::printf ("  split:  out1 %.3f (instruments) out2 %.3f (click)\n", last (0), last (1));
     CHECK (std::abs (last (0) - 0.5f) < 1e-5f && std::abs (last (1) - 0.25f) < 1e-5f);
 
+    // The user picks the outputs: swapped, then on 3 and 4.
+    player.setOutputChannels (1, 0);
+    run (0.05);
+    std::printf ("  split swapped: out1 %.3f (click) out2 %.3f (instruments)\n", last (0), last (1));
+    CHECK (std::abs (last (0) - 0.25f) < 1e-5f && std::abs (last (1) - 0.5f) < 1e-5f);
+    player.setOutputChannels (2, 3);
+    run (0.05);
+    std::printf ("  split on 3/4:  out1 %.3f out2 %.3f out3 %.3f out4 %.3f\n", last (0), last (1), last (2), last (3));
+    CHECK (last (0) == 0.0f && last (1) == 0.0f && std::abs (last (2) - 0.5f) < 1e-5f && std::abs (last (3) - 0.25f) < 1e-5f);
+    player.setOutputChannels (0, 2);
+
     player.setOutputMode (2);
     run (0.05);
     std::printf ("  4 ch:   out1/2 %.3f %.3f  out3/4 %.3f %.3f\n", last (0), last (1), last (2), last (3));
@@ -577,6 +588,54 @@ static void testOutputRouting()
     CHECK (player.getOutputChannels() == 2);
     player.audioDeviceStopped();
     player.setSong (nullptr);
+}
+
+static void testTestTone()
+{
+    std::printf ("[player] line-check tone on one output\n");
+    Player player; // no song: the tone works anyway (checking the console before loading)
+    FakeDevice device (4);
+    player.audioDeviceAboutToStart (&device);
+    juce::AudioBuffer<float> block (4, 480);
+    std::vector<std::vector<float>> out (4);
+    auto run = [&] (double seconds) {
+        for (int b = 0; b < (int) std::lround (seconds * engineRate / 480); ++b)
+        {
+            player.audioDeviceIOCallbackWithContext (nullptr, 0, block.getArrayOfWritePointers(), 4, 480, {});
+            for (int c = 0; c < 4; ++c)
+                out[(size_t) c].insert (out[(size_t) c].end(), block.getReadPointer (c), block.getReadPointer (c) + 480);
+        }
+    };
+    player.startTestTone (2);
+    run (2.5);
+    auto peak = [&] (int c, size_t from, size_t to) {
+        float p = 0.0f;
+        for (size_t i = from; i < to && i < out[(size_t) c].size(); ++i)
+            p = std::max (p, std::abs (out[(size_t) c][i]));
+        return p;
+    };
+    const size_t sec = (size_t) engineRate;
+    const double f = dominantFrequency (out[2], sec / 2, sec);
+    std::printf ("  out3: peak %.4f (%.1f dBFS) at %.0f Hz, first sample %.5f; other outputs %.5f; after 2 s %.5f\n",
+                 peak (2, sec / 2, sec), 20.0 * std::log10 (peak (2, sec / 2, sec)), f, std::abs (out[2][0]),
+                 std::max ({ peak (0, 0, 3 * sec), peak (1, 0, 3 * sec), peak (3, 0, 3 * sec) }), peak (2, 2 * sec + 100, 3 * sec));
+    CHECK (std::abs (peak (2, sec / 2, sec) - 0.1259f) < 0.002f); // -18 dBFS
+    CHECK (std::abs (f - 1000.0) < 5.0);
+    CHECK (std::abs (out[2][0]) < 0.001f);                         // fades in (no click)
+    CHECK (peak (0, 0, 3 * sec) == 0.0f && peak (1, 0, 3 * sec) == 0.0f && peak (3, 0, 3 * sec) == 0.0f);
+    CHECK (peak (2, 2 * sec + 100, 3 * sec) == 0.0f);              // stops by itself after 2 s
+
+    // Stop early and an output the device does not have.
+    for (auto& o : out)
+        o.clear();
+    player.startTestTone (1);
+    run (0.2);
+    player.startTestTone (-1);
+    run (0.2);
+    CHECK (peak (1, 0, (size_t) (0.2 * engineRate)) > 0.1f && peak (1, (size_t) (0.21 * engineRate), out[1].size()) == 0.0f);
+    player.startTestTone (9);
+    run (0.1); // must not crash
+    player.audioDeviceStopped();
 }
 
 static void testLimiter()
@@ -677,6 +736,7 @@ int main (int argc, char** argv)
     testStretchQuality();
     testPlayerTransport();
     testOutputRouting();
+    testTestTone();
     testLimiter();
     testRenderSpeed();
     testAnalysis();
