@@ -209,6 +209,8 @@ export interface EngineSongStatus {
   loadId: number;
   song?: LoadedSong | null;
   analysis?: SongAnalysis | null;
+  /** Next song decoded ahead of time (setlists). */
+  preload?: { state: "idle" | "loading" | "ready" | "skipped" | "error"; tracks: number; memoryMb?: number | null } | null;
 }
 
 export interface StudioStatus {
@@ -249,6 +251,9 @@ export interface SongTempo {
 export interface SongRecord extends SongTempo {
   id: number;
   title: string;
+  artist: string;
+  songKey: string;
+  notes: string;
   sectionsInitialized: boolean;
   timeSignature: TimeSignature;
   sourceArchive: string | null;
@@ -282,6 +287,69 @@ export interface TransportState {
   /** Safety limiter gain per bus (1 = idle). */
   mainLimiterGain: number;
   monitorLimiterGain: number;
+  /** Scheduled seamless jump (song seconds). */
+  pendingJump: { atSec: number; targetSec: number } | null;
+  /** Active loop [start, end) in song seconds. */
+  loopRange: [number, number] | null;
+  /** How far ahead a jump must be scheduled right now. */
+  minJumpLeadSec: number;
+  jumpsDone: number;
+}
+
+// ---- Phase 5: Song Editor, setlists, backup -----------------------------------
+
+export interface SongDetails {
+  title: string;
+  artist: string;
+  songKey: string;
+  notes: string;
+  timeSignature: TimeSignature;
+}
+
+export interface SetlistSummary {
+  id: number;
+  name: string;
+  eventDate: string;
+  place: string;
+  songCount: number;
+  totalSec: number;
+  updatedAt: string;
+}
+
+export interface SetlistItem {
+  songId: number;
+  notes: string;
+  title: string;
+  artist: string;
+  songKey: string;
+  originalBpm: number | null;
+  targetBpm: number | null;
+  timeSignature: TimeSignature;
+  durationSec: number | null;
+}
+
+export interface SetlistRecord {
+  id: number;
+  name: string;
+  eventDate: string;
+  place: string;
+  notes: string;
+  items: SetlistItem[];
+}
+
+export interface SetlistInput {
+  name: string;
+  eventDate: string;
+  place: string;
+  notes: string;
+  items: { songId: number; notes: string }[];
+}
+
+export interface BackupReport {
+  songs: number;
+  setlists: number;
+  skippedSongs: number;
+  missingFiles: string[];
 }
 
 /** Peak levels (linear) since the previous read. */
@@ -311,6 +379,8 @@ export interface TrackMix {
 export interface LibrarySong {
   id: number;
   title: string;
+  artist: string;
+  songKey: string;
   originalBpm: number | null;
   targetBpm: number | null;
   timeSignature: TimeSignature;

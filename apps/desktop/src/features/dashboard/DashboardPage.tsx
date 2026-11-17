@@ -153,7 +153,7 @@ function AudioDriversPanel() {
         ))}
       {diag.status === "error" && <ErrorText error={diag.error} />}
       <p className="mt-4 text-xs text-ink-400">
-        Solo lectura. La selección de dispositivo y el enrutamiento llegan en la Fase 4.
+        Solo lectura. El dispositivo y las salidas se eligen en Audio Settings.
       </p>
     </Panel>
   );
@@ -186,7 +186,7 @@ export function DashboardPage() {
   return (
     <div className="mx-auto max-w-6xl px-8 py-8">
       <header className="mb-8">
-        <p className="text-xs font-semibold uppercase tracking-[0.25em] text-live-400">Fase 4 · Tarjeta de sonido y salidas</p>
+        <p className="text-xs font-semibold uppercase tracking-[0.25em] text-live-400">Fase 5 · Song Editor, Setlists y Live Mode</p>
         <h1 className="mt-1 text-3xl font-bold">Dashboard</h1>
         <p className="mt-2 max-w-2xl text-sm text-ink-300">
           Estado de los componentes de LIVEPLAYER. Todos los datos provienen del backend nativo en tiempo real.

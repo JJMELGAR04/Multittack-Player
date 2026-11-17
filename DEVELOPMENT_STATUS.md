@@ -2,25 +2,72 @@
 
 | | |
 |---|---|
-| **Última fase cerrada** | **FASE 4 — Tarjeta de sonido y salidas** ✅ aprobada (2026-11-17) y fusionada en `main` |
-| **Fases anteriores** | Fase 1 ✅ · Fase 2 ✅ ([informe](docs/fases/FASE-2.md)) · Fase 3 ✅ ([informe](docs/fases/FASE-3.md)) · Fase 4 ✅ ([informe](docs/fases/FASE-4.md)) |
-| **Próxima fase** | **FASE 5 — Song Editor, Setlists y Live Mode** · plan propuesto, ⏳ **pendiente de aprobación del usuario** (no iniciada) |
+| **Fase actual** | **FASE 5 — SONG EDITOR, SETLISTS Y LIVE MODE** |
+| **Estado** | Implementada y probada. ⏳ **Pendiente de aprobación del usuario** |
+| **Rama** | `feature/phase-5-live` (se fusionará en `main` cuando se apruebe) |
 | **Fecha** | 2026-11-17 |
+| **Fases anteriores** | Fase 1 ✅ · Fase 2 ✅ ([informe](docs/fases/FASE-2.md)) · Fase 3 ✅ ([informe](docs/fases/FASE-3.md)) · Fase 4 ✅ ([informe](docs/fases/FASE-4.md)) |
+| **Próxima fase** | FASE 6 — Estabilización y multiplataforma · **no iniciada**; requiere aprobación expresa del plan |
 
-## Plan propuesto para la fase 5
+## Objetivo de la fase 5 (acordado con el usuario)
+- **Song Editor**: el usuario decide a mano dónde empieza y termina cada parte de la canción. La detección automática es solo el punto de partida.
+- **Setlists** para cada servicio o concierto.
+- **Live Mode**: «casi el mismo Multitrack Studio» pero para tocar. Eliges el setlist y la canción tú (sin pedales: se usa la computadora). **Nunca pasa sola a la siguiente.**
+- **Mezcla en vivo, opción B**: los cambios de volumen en Live son solo para ese momento. Se guardan con «Guardar mezcla» y se deshacen con «Volver a la guardada».
+- **General Settings**: atajos de teclado y copia de seguridad.
 
-1. **Song Editor**: marcar a mano dónde empieza y termina cada parte (la detección automática es solo el punto de partida):
-   - arrastrar los bordes de cada parte, con ajuste al compás;
-   - marcar un corte con una tecla mientras suena;
-   - dividir, unir, borrar y renombrar partes;
-   - repetir una parte en bucle para comprobarla;
-   - datos de la canción: título, artista, tonalidad, BPM, compás y notas;
-   - deshacer y rehacer.
-2. **Setlists**: listas por servicio o concierto con nombre, fecha y lugar. Se agregan canciones de la biblioteca, se ordenan arrastrando, cada canción lleva notas y se ve la duración total. Se pueden duplicar.
-3. **Live Mode**: pantalla grande para el escenario:
-   - canción y parte actual, siguiente parte y compás y tiempo;
-   - botones grandes y atajos de teclado;
-   - saltos a una parte al terminar el compás (para que la banda siga), y bucle de una parte;
-   - carga anticipada de la siguiente canción del setlist;
-   - bloqueo contra toques accidentales.
-4. **General Settings**: atajos de teclado y copia de seguridad (exportar e importar la biblioteca).
+## Funcionalidades
+
+Leyenda: ✅ Implementado y probado
+
+| Funcionalidad | Estado | Evidencia |
+|---|---|---|
+| **Song Editor**: forma de onda con zoom (hasta 32×), regla de compases y partes de colores | ✅ | E2E + captura `10-song-editor.png` |
+| Arrastrar el inicio de una parte, con **ajuste al compás** (o libre) | ✅ | E2E: 10,00 → 20,00 s, cae en línea de compás y se guarda |
+| **Marcar una parte con una tecla (M) mientras suena**, eligiendo antes de qué tipo es | ✅ | E2E: «Interludio» marcado en el compás |
+| Cambiar tipo y nombre, mover el inicio ±1 tiempo, borrar (se une a la anterior), escuchar desde una parte, **repetirla en bucle** | ✅ | Pruebas de UI + E2E (bucle) |
+| **Deshacer y rehacer** (Ctrl+Z / Ctrl+Y) y **guardado automático** | ✅ | E2E |
+| Datos de la canción: título, artista, **tonalidad**, compás, notas (se ven en Live) | ✅ | Prueba de base de datos + E2E |
+| **Setlists**: nombre, fecha, lugar y notas; agregar canciones de la biblioteca (una canción puede repetirse); **ordenar arrastrando**; notas por canción; duración total; duplicar; borrar; guardado automático | ✅ | Prueba de base de datos + E2E + captura `11-setlists.png` |
+| **Live Mode**: elegir setlist; lista de canciones con tono, BPM, duración y notas; canción, parte actual y siguiente en grande; reloj y compás | ✅ | E2E + captura `12-live.png` |
+| **Salto a una parte al terminar el compás** (o al terminar la parte, o inmediato), **sin cortes**: el click no pierde el pulso | ✅ | Prueba de audio: el fundido empieza en la muestra exacta del compás y llega en fase al destino; con el tempo cambiado el espaciado del click se mantiene (error 0,06 ms). E2E: salto programado en el compás 2,499 s → 50 s |
+| **Repetir una parte (bucle)** sin cortes; Esc cancela salto o bucle | ✅ | Prueba de audio (5 repeticiones) + E2E |
+| **Siguiente canción preparada** en segundo plano: al elegirla empieza al instante | ✅ | Prueba de Rust + E2E: lista en 63 ms |
+| Cambiar de canción mientras suena **pide confirmación**; detener pide pulsar dos veces | ✅ | E2E |
+| **Bloqueo** contra toques accidentales (canciones, detener y mezclador) | ✅ | E2E |
+| **Mezcla en vivo solo para el momento** (opción B), con «Guardar mezcla» y «Volver a la guardada» | ✅ | E2E: la mezcla guardada no cambia hasta pulsar «Guardar mezcla» |
+| Atajos en Live: Espacio, ← →, L, Esc, ↑ ↓ + Intro | ✅ | E2E + pruebas de UI |
+| **General Settings**: cambiar atajos (si eliges una tecla ya usada se intercambian), volver a los de fábrica | ✅ | E2E |
+| **Copia de seguridad**: todo en un .zip (audio, mezcla, partes, tempo, datos y setlists); restaurar agrega sin duplicar ni borrar | ✅ | Prueba de Rust (exportar → importar en otra biblioteca) + E2E |
+| Biblioteca: artista y tonalidad visibles, búsqueda también por artista, botón «Editar partes» | ✅ | |
+
+## Pruebas realizadas (2026-11-17)
+
+| Suite | Resultado |
+|---|---|
+| Typecheck | ✅ 0 errores |
+| UI (Vitest) | ✅ 43/43 |
+| Motor C++ (ABI v6, saltos y bucles sin cortes, enrutamiento, tono, sincronía, rendimiento, análisis) | ✅ 3/3 suites |
+| Rust (`liveplayer-db` 15, `liveplayer-engine` 2, `liveplayer-desktop` 5) | ✅ |
+| E2E sobre la app real | ✅ **97/97**, cuatro ejecuciones seguidas (silenciosa; carpeta de datos aislada) |
+
+### Errores encontrados y corregidos durante la fase
+- **El Song Editor recargaba la canción al abrirse** porque decidía antes de saber cuál estaba cargada. Eso devolvía la posición a 0 y estropeaba la primera edición. Ahora espera a conocer el estado.
+- **El editor podía guardar una lista de partes vacía** encima de la detección automática si se abría antes de que terminara. Ahora espera a la detección.
+- **Arrastres** (bordes de partes y filas del setlist) que llegaban muy seguidos se perdían. Ahora se leen de una referencia, no del estado de React.
+- **Renombrar en la biblioteca**: Intro ahora guarda directamente, sin depender de que el campo tenga el foco.
+- Bucle: si un bloque empezaba justo en el final del bucle, dejaba de repetirse. Corregido y cubierto por la prueba.
+- Restaurar la misma copia dos veces duplicaba el setlist. Ahora se salta.
+
+## Limitaciones conocidas
+- Las partes se definen por su **inicio**: cada una termina donde empieza la siguiente (la última, al final de la canción).
+- El tempo (BPM) se cambia en Multitrack Studio › Tempo; el Song Editor lo muestra.
+- La siguiente canción preparada ocupa memoria. Si las dos canciones juntas pasan de la mitad de la RAM no se prepara y al elegirla tarda unos segundos (Live lo indica).
+- Los atajos funcionan en Live y en el Song Editor; Multitrack Studio mantiene los suyos (Espacio, Esc, Inicio, 1-9).
+- Restaurar una copia agrega canciones; si una canción ya existe (mismo título y mismas pistas) no se toca.
+
+## Base de datos
+Migración 7: `songs.artist`, `songs.song_key`, `songs.notes`; tablas `setlists` y `setlist_items`. Si se borra una canción de la biblioteca, sale de todos los setlists.
+
+## Próximo paso propuesto (requiere aprobación)
+**FASE 6 — Estabilización y multiplataforma**: pruebas largas de estabilidad (horas de reproducción), rendimiento en equipos modestos, macOS y evaluación de tablets.

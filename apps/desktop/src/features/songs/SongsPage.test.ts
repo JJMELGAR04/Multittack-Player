@@ -5,6 +5,8 @@ import { filterSongs, sortSongs } from "./SongsPage";
 const song = (id: number, title: string, extra: Partial<LibrarySong> = {}): LibrarySong => ({
   id,
   title,
+  artist: "",
+  songKey: "",
   originalBpm: null,
   targetBpm: null,
   timeSignature: "4/4",

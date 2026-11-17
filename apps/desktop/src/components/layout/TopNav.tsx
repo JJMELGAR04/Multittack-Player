@@ -2,7 +2,7 @@ import { NavLink } from "react-router-dom";
 import { MODULES } from "@/app/modules";
 
 /** Phase whose modules are already functional; later ones are shown dimmed. */
-const CURRENT_PHASE = 4;
+const CURRENT_PHASE = 5;
 
 /** Main navigation as a horizontal bar at the top of the window. */
 export function TopNav() {
@@ -43,7 +43,7 @@ export function TopNav() {
         </ul>
       </nav>
 
-      <span className="shrink-0 font-mono text-[11px] text-ink-400">v0.4.0 · Fase 4</span>
+      <span className="shrink-0 font-mono text-[11px] text-ink-400">v0.5.0 · Fase 5</span>
     </header>
   );
 }

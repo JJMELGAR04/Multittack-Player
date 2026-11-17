@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { FileArchive, Folder, Music, Pencil, Play, Plus, Search, Trash2 } from "lucide-react";
+import { FileArchive, Folder, Music, Pencil, PencilRuler, Play, Plus, Search, Trash2 } from "lucide-react";
 import { backend, isNativeAvailable } from "@/lib/ipc/client";
 import type { LibrarySong } from "@/lib/ipc/types";
 import { formatBpm, formatTime } from "@/features/studio/model";
@@ -15,7 +15,7 @@ const SORTS: { key: SortKey; label: string }[] = [
   { key: "duration", label: "Duración" },
 ];
 
-/** Accent-insensitive search ("cancion" finds "Canción"). */
+/** Accent-insensitive search over title and artist ("cancion" finds "Canción"). */
 function normalise(s: string): string {
   return s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
 }
@@ -39,7 +39,7 @@ export function sortSongs(songs: LibrarySong[], key: SortKey): LibrarySong[] {
 
 export function filterSongs(songs: LibrarySong[], query: string): LibrarySong[] {
   const q = normalise(query.trim());
-  return q ? songs.filter((s) => normalise(s.title).includes(q)) : songs;
+  return q ? songs.filter((s) => normalise(`${s.title} ${s.artist}`).includes(q)) : songs;
 }
 
 function dateLabel(iso: string): string {
@@ -49,6 +49,14 @@ function dateLabel(iso: string): string {
 
 function RenameField({ song, onDone }: { song: LibrarySong; onDone: (title: string | null) => void }) {
   const [text, setText] = useState(song.title);
+  // Enter commits directly (it does not depend on the field having focus); blur commits too, once.
+  const done = useRef(false);
+  const finish = (value: string | null) => {
+    if (done.current) return;
+    done.current = true;
+    const t = value?.trim() ?? "";
+    onDone(t && t !== song.title ? t : null);
+  };
   return (
     <input
       autoFocus
@@ -57,14 +65,11 @@ function RenameField({ song, onDone }: { song: LibrarySong; onDone: (title: stri
       maxLength={200}
       onChange={(e) => setText(e.target.value)}
       onFocus={(e) => e.target.select()}
-      onBlur={(e) => {
-        // Read the field itself: Enter right after typing can arrive before React re-renders.
-        const t = e.currentTarget.value.trim();
-        onDone(t && t !== song.title ? t : null);
-      }}
+      // Read the field itself: Enter right after typing can arrive before React re-renders.
+      onBlur={(e) => finish(e.currentTarget.value)}
       onKeyDown={(e) => {
-        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-        else if (e.key === "Escape") onDone(null);
+        if (e.key === "Enter") finish(e.currentTarget.value);
+        else if (e.key === "Escape") finish(null);
       }}
       className="w-full rounded border border-info-500 bg-ink-950 px-2 py-1 text-sm text-ink-100 outline-none"
     />
@@ -146,7 +151,7 @@ export function SongsPage() {
           <Search size={16} className="text-ink-400" />
           <input
             aria-label="Buscar canción"
-            placeholder="Buscar por título…"
+            placeholder="Buscar por título o artista…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="flex-1 bg-transparent text-sm text-ink-100 outline-none placeholder:text-ink-400"
@@ -210,7 +215,10 @@ export function SongsPage() {
                         ) : (
                           <Folder size={14} className="shrink-0 text-ink-400" aria-label="Importada de archivos" />
                         )}
-                        <span className="truncate font-semibold text-ink-100">{s.title}</span>
+                        <span className="min-w-0">
+                          <span className="block truncate font-semibold text-ink-100">{s.title}</span>
+                          {(s.artist || s.songKey) && <span className="block truncate text-[11px] text-ink-400">{[s.artist, s.songKey && `Tono ${s.songKey}`].filter(Boolean).join(" · ")}</span>}
+                        </span>
                         {s.sectionCount > 0 && <span className="shrink-0 text-[10px] text-ink-400">{s.sectionCount} partes</span>}
                       </div>
                     )}
@@ -241,6 +249,15 @@ export function SongsPage() {
                         className="flex items-center gap-1 rounded-md bg-go-500/15 px-2.5 py-1.5 text-xs font-semibold text-go-400 hover:bg-go-500/25"
                       >
                         <Play size={12} /> Abrir
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/song-editor?song=${s.id}`)}
+                        aria-label={`Editar partes de ${s.title}`}
+                        title="Editar partes y datos (Song Editor)"
+                        className="rounded-md p-1.5 text-ink-400 hover:bg-ink-800 hover:text-ink-100"
+                      >
+                        <PencilRuler size={14} />
                       </button>
                       <button
                         type="button"

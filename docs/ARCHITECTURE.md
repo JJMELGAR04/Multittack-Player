@@ -73,6 +73,12 @@ archivos ──SongLoader──► SongData (RAM, frecuencia del dispositivo, in
                          dispositivo de salida (ASIO / WASAPI; todas sus salidas abiertas, hasta 32)
 ```
 
+### Saltos musicales, bucles y carga anticipada (fase 5)
+
+- **Salto al compás sin cortes**: el hilo de render tiene dos `SongRenderer`. Cuando el bloque que va a producir contiene la muestra exacta del salto (p. ej. la siguiente línea de compás), arranca el segundo en el destino alineado a esa muestra y mezcla ambos con un fundido de igual potencia de 5 ms; después intercambian los papeles. No hay silencio ni desplazamiento: el click mantiene su rejilla. La UI calcula el instante (siguiente compás, final de la parte o inmediato) y lo programa con `lp_engine_schedule_jump`; debe estar al menos `min_jump_lead_sec` por delante (lo que el render ya tiene preparado, ~0,25 s × tempo).
+- **Bucle de una parte**: el mismo mecanismo, rearmado cada vez que el render vuelve a pasar por el final del bucle.
+- **Siguiente canción preparada**: `lp_engine_preload_song` decodifica otra canción en un hilo de prioridad baja (nunca compite con la que suena). Si después se carga esa misma canción, se instala al instante. Se descarta si las dos canciones juntas usarían más de la mitad de la RAM.
+
 ### Dispositivo de audio (fase 4)
 
 - **Elección**: controlador (ASIO, WASAPI compartido / exclusivo / baja latencia), dispositivo, frecuencia y búfer. Se guarda (`audio.device`) y se abre al arrancar la app.
@@ -123,6 +129,12 @@ En el escritorio, el hilo principal ejecuta el bucle de mensajes nativo (Win32 e
 | `studio_reorder_tracks(songId, positions)` / `studio_reorder_mixer(songId, positions)` | orden de las pistas / orden de las tiras del mezclador (independientes; no cambian el índice en el motor) | no |
 | `studio_set_track_mix(songId, position, mix)` | guarda volumen (−60…+8 dB), mute y solo de una pista con la canción | no (el motor recibe la ganancia aparte) |
 | `library_songs` / `library_rename` / `library_delete` | biblioteca: listar con BPM, compás, duración, pistas y partes / renombrar / quitar (borra solo archivos extraídos por LIVEPLAYER) | no |
+| `transport_schedule_jump(atSec, targetSec)` / `transport_cancel_jump` / `transport_set_loop(start, end)` | salto musical sin cortes / cancelarlo / bucle de una parte | sí |
+| `studio_preload_song(songId)` | prepara en segundo plano la siguiente canción del setlist | sí |
+| `studio_set_song_details(songId, details)` | título, artista, tonalidad, notas y compás (Song Editor) | no |
+| `setlist_list/get/create/save/delete/duplicate` | setlists (se guarda el setlist entero de una vez) | no |
+| `ui_setting_get/set(key)` | preferencias de la interfaz permitidas: atajos de teclado, último setlist de Live | no |
+| `backup_export(path)` / `backup_import(path)` | copia de seguridad en un .zip (índice JSON + audio sin comprimir) / restaurarla sin duplicar | no |
 | `studio_meters` | pico con caída de ~300 ms (la lectura no lo borra): uno por pista + PA L/R + banda L/R (la UI lee ~25 veces/s y anima los medidores en `requestAnimationFrame`, sin renders de React) | sí |
 
 Los comandos son síncronos y cortos: el trabajo pesado (decodificar, analizar) ocurre en hilos del motor y la UI consulta `studio_status` (cada 250 ms mientras hay trabajo) y `transport_state` (25 veces por segundo; el cursor se interpola entre lecturas).
