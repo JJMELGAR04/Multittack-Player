@@ -71,9 +71,14 @@ public:
         toneSerial.fetch_add (1);
     }
     double getTempoTarget() const noexcept { return tempoTarget.load(); }
+    /** Pitch shift of the music tracks in semitones (-12..12); click / cues untouched. */
+    void setTranspose (double semitones);
+    double getTranspose() const noexcept { return transposeTarget.load(); }
     /** Volume of the monitor bus (click / cues), linear. */
     void setMonitorGain (float gain) { monitorGainTarget.store (gain); }
     void setTrackBus (int track, int bus);
+    /** Click / cues tracks are never transposed. */
+    void setTrackPitchFixed (int track, bool fixed);
     /** Per-track gain (used for solo preview), smoothed over ~10 ms. */
     void setTrackGain (int track, float gain);
     /** Per-song level trim of each bus (headroom so the summed stems never clip). */
@@ -98,6 +103,7 @@ public:
         double positionSec = 0.0;
         double durationSec = 0.0;
         double tempoRatio = 1.0;
+        double transpose = 0.0;
         double masterGain = 1.0;
         double renderLoad = 0.0;
         juce::uint64 underruns = 0;
@@ -153,6 +159,8 @@ private:
     std::atomic<uint32_t> seekGeneration { 0 };
     std::atomic<double> seekTarget { 0.0 };  // song samples
     std::atomic<double> tempoTarget { 1.0 };
+    std::atomic<double> transposeTarget { 0.0 };
+    std::unique_ptr<std::atomic<bool>[]> trackPitchFixed;
 
     // Scheduled jump / loop (control -> render), in song samples.
     std::atomic<uint32_t> jumpSerial { 0 };

@@ -66,7 +66,7 @@ public:
             if (g != generation)
             {
                 generation = g;
-                active->seek (player.seekTarget.load(), player.tempoTarget.load());
+                active->seek (player.seekTarget.load(), player.tempoTarget.load(), player.transposeTarget.load());
                 endWritten = false;
                 tail = 0;
             }
@@ -83,6 +83,13 @@ public:
 
             auto& meta = chunks.writeMeta();
             const double tempo = player.tempoTarget.load();
+            const double transpose = player.transposeTarget.load();
+            for (int t = 0; t < player.numTracks; ++t)
+            {
+                const bool fixed = player.trackPitchFixed[(size_t) t].load (std::memory_order_relaxed);
+                active->setPitchFixed ((size_t) t, fixed);
+                standby->setPitchFixed ((size_t) t, fixed);
+            }
             const auto js = player.jumpSerial.load (std::memory_order_acquire);
             if (js != jumpSeen)
                 jumpSeen = js;
@@ -90,8 +97,8 @@ public:
             if (tail > 0)
             {
                 // Second half of a jump crossfade: old content still fading out.
-                standby->render (scratch.getArrayOfWritePointers(), tempo, scratchMeta);
-                active->render (pointers.data(), tempo, meta);
+                standby->render (scratch.getArrayOfWritePointers(), tempo, transpose, scratchMeta);
+                active->render (pointers.data(), tempo, transpose, meta);
                 const int n = juce::jmin (tail, ChunkRing::chunkFrames);
                 blend (0, n);
                 tail = 0;
@@ -128,14 +135,14 @@ public:
 
                 if (armed && at < p1)
                 {
-                    active->render (pointers.data(), tempo, meta);
+                    active->render (pointers.data(), tempo, transpose, meta);
                     const int offset = juce::jlimit (0, ChunkRing::chunkFrames,
                                                      (int) std::floor ((at - meta.sourcePos) / meta.rate + 0.5));
-                    standby->seek (juce::jmax (0.0, target - offset * meta.rate), tempo);
+                    standby->seek (juce::jmax (0.0, target - offset * meta.rate), tempo, transpose);
                     // Old content (A) goes to scratch, new (B) into the ring.
                     for (int c = 0; c < numChannels; ++c)
                         scratch.copyFrom (c, 0, pointers[(size_t) c], ChunkRing::chunkFrames);
-                    standby->render (pointers.data(), tempo, scratchMeta);
+                    standby->render (pointers.data(), tempo, transpose, scratchMeta);
                     for (int c = 0; c < numChannels; ++c)
                         for (int k = 0; k < offset; ++k)
                             pointers[(size_t) c][k] = scratch.getSample (c, k); // before the jump: A only
@@ -151,7 +158,7 @@ public:
                 }
                 else
                 {
-                    active->render (pointers.data(), tempo, meta);
+                    active->render (pointers.data(), tempo, transpose, meta);
                 }
             }
             meta.generation = generation;
@@ -207,6 +214,7 @@ void Player::setSong (SongPtr newSong)
     ended.store (false);
     positionSamples.store (0.0);
     tempoTarget.store (1.0);
+    transposeTarget.store (0.0);
     currentRate.store (1.0);
     stretching.store (false);
     renderLoad.store (0.0);
@@ -225,11 +233,13 @@ void Player::setSong (SongPtr newSong)
     trackGainTarget = std::make_unique<std::atomic<float>[]> ((size_t) n);
     trackGain.assign ((size_t) n, 1.0f);
     trackPeak = std::make_unique<std::atomic<float>[]> ((size_t) n);
+    trackPitchFixed = std::make_unique<std::atomic<bool>[]> ((size_t) n);
     for (int t = 0; t < n; ++t)
     {
         trackBus[(size_t) t].store (song->tracks[(size_t) t].bus);
         trackGainTarget[(size_t) t].store (1.0f);
         trackPeak[(size_t) t].store (0.0f);
+        trackPitchFixed[(size_t) t].store (song->tracks[(size_t) t].role != roleMusic);
     }
     numTracks = n;
     renderer.prepare (song);
@@ -298,6 +308,20 @@ static void storeMax (std::atomic<float>& a, float v) noexcept
 {
     float cur = a.load (std::memory_order_relaxed);
     while (v > cur && ! a.compare_exchange_weak (cur, v, std::memory_order_relaxed)) {}
+}
+
+void Player::setTrackPitchFixed (int track, bool fixed)
+{
+    if (track >= 0 && track < numTracks)
+        trackPitchFixed[(size_t) track].store (fixed);
+}
+
+void Player::setTranspose (double semitones)
+{
+    transposeTarget.store (juce::jlimit (-12.0, 12.0, semitones));
+    // While not playing, re-render the lookahead in the new key right away.
+    if (request.load() != requestPlay && numTracks > 0)
+        seek (positionSamples.load() / songSampleRate);
 }
 
 void Player::setTrackGain (int track, float gain)
@@ -374,6 +398,7 @@ Player::Snapshot Player::snapshot() const
     s.durationSec = songSampleRate > 0 ? (double) songLength / songSampleRate : 0.0;
     s.positionSec = songSampleRate > 0 ? positionSamples.load() / songSampleRate : 0.0;
     s.tempoRatio = currentRate.load();
+    s.transpose = transposeTarget.load();
     s.stretching = stretching.load();
     s.masterGain = masterGainTarget.load();
     s.renderLoad = renderLoad.load();

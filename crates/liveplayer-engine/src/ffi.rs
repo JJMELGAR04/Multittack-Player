@@ -3,7 +3,7 @@
 
 use std::ffi::{c_char, c_int};
 
-pub const ABI_VERSION: u32 = 6;
+pub const ABI_VERSION: u32 = 7;
 
 #[repr(C)]
 pub struct lp_engine {
@@ -43,6 +43,7 @@ pub struct lp_transport_state {
     pub loop_end: f64,
     pub min_jump_lead_sec: f64,
     pub jumps_done: u64,
+    pub transpose: f64,
 }
 
 pub type JsonFn = unsafe extern "C" fn(*mut lp_engine, *mut c_char, usize, *mut usize) -> lp_result;
@@ -79,6 +80,7 @@ unsafe extern "C" {
     pub fn lp_engine_show_device_panel(engine: *mut lp_engine) -> lp_result;
     pub fn lp_engine_schedule_jump(engine: *mut lp_engine, at_sec: f64, target_sec: f64) -> lp_result;
     pub fn lp_engine_cancel_jump(engine: *mut lp_engine) -> lp_result;
+    pub fn lp_engine_set_transpose(engine: *mut lp_engine, semitones: f64) -> lp_result;
     pub fn lp_engine_set_loop(engine: *mut lp_engine, start_sec: f64, end_sec: f64) -> lp_result;
     pub fn lp_engine_preload_song(engine: *mut lp_engine, request_json: *const c_char) -> lp_result;
     pub fn lp_engine_get_output_info(

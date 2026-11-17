@@ -279,6 +279,7 @@ bool SongLoader::decodeTrack (size_t index, TrackData& out, std::string& err)
     out.format = file.getFileExtension().substring (1).toUpperCase().toStdString();
     out.role = req.role >= 0 ? req.role : (isClickTrackName (out.name) ? roleClick : isGuideTrackName (out.name) ? roleGuide : roleMusic);
     out.bus = req.bus >= 0 ? req.bus : (out.role == roleMusic ? busMain : busMonitor);
+    out.voice = req.voice;
 
     if (! file.existsAsFile())
     {
@@ -383,6 +384,11 @@ void SongLoader::run()
     std::vector<std::thread> pool;
     for (size_t w = 0; w < workers; ++w)
         pool.emplace_back ([&] {
+           #if JUCE_WINDOWS
+            // Decoding runs below normal priority: on modest computers the
+            // interface (and the song that is playing) stay responsive.
+            SetThreadPriority (GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+           #endif
             for (size_t i = next++; i < requests.size(); i = next++)
             {
                 if (anyFailed.load() || threadShouldExit())

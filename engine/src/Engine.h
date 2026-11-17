@@ -131,7 +131,7 @@ private:
     std::vector<juce::uint8> preloadedMix;
     std::string preloadState = "idle";
     std::vector<float> trackGains;
-    double reloadPosition = 0.0, reloadTempo = 1.0;
+    double reloadPosition = 0.0, reloadTempo = 1.0, reloadTranspose = 0.0;
     bool reloadPlaying = false;
     juce::uint64 nextLoadId = 1;
     juce::uint64 currentLoadId = 0;

@@ -158,6 +158,14 @@ pub struct TrackRequest {
     /// `main` (instruments) or `monitor` (click / cues). None = from the role.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bus: Option<String>,
+    /// Sung vocals: formants are kept when the key changes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub voice: bool,
+}
+
+/// Library roles that are sung vocals (formant-preserving key changes).
+pub fn is_voice_role(role: &str) -> bool {
+    matches!(role, "lead_vocal" | "backing_vocals")
 }
 
 /// Engine role for a library role (`click`, `cues`, `drums`...).
@@ -319,6 +327,8 @@ pub struct TransportState {
     /// How far ahead a jump must be scheduled right now (song seconds).
     pub min_jump_lead_sec: f64,
     pub jumps_done: u64,
+    /// Key change of the music tracks (semitones).
+    pub transpose: f64,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -663,7 +673,15 @@ impl Engine {
             loop_range: (s.loop_end > s.loop_start && s.loop_start >= 0.0).then_some((s.loop_start, s.loop_end)),
             min_jump_lead_sec: s.min_jump_lead_sec,
             jumps_done: s.jumps_done,
+            transpose: s.transpose,
         })
+    }
+
+    /// Key change of the music tracks in semitones (-12..12); click and cues are never shifted.
+    pub fn set_transpose(&self, semitones: f64) -> Result<(), EngineError> {
+        self.check_thread()?;
+        // SAFETY: valid engine pointer; owning thread.
+        self.map(unsafe { ffi::lp_engine_set_transpose(self.raw.as_ptr(), semitones) })
     }
 
     /// Seamless jump at song second `at_sec` to `target_sec` (bar-synchronous part jumps).
@@ -826,6 +844,7 @@ mod tests {
                 name: f.replace(".wav", ""),
                 role: None,
                 bus: None,
+                voice: false,
             })
             .collect();
         engine.load_song(&tracks, None, 4).expect("load");
@@ -884,6 +903,10 @@ mod tests {
         engine.set_loop(1.5, 2.5).unwrap();
         assert_eq!(engine.transport().unwrap().loop_range, Some((1.5, 2.5)));
         engine.set_loop(0.0, 0.0).unwrap();
+        engine.set_transpose(-2.0).unwrap();
+        assert_eq!(engine.transport().unwrap().transpose, -2.0);
+        assert!(engine.set_transpose(13.0).is_err());
+        engine.set_transpose(0.0).unwrap();
         engine.stop().unwrap();
         std::thread::sleep(Duration::from_millis(100));
         let t = engine.transport().unwrap();
@@ -897,6 +920,7 @@ mod tests {
             name: "Pulse".into(),
             role: None,
             bus: None,
+            voice: false,
         }];
         engine.preload_song(&next).unwrap();
         let mut ready = false;

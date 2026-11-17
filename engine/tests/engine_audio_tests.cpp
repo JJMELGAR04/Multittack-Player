@@ -79,7 +79,7 @@ struct Rendered
     std::vector<ChunkMeta> meta;
 };
 
-static Rendered renderChunks (SongRenderer& r, int numTracks, int chunks, double rate)
+static Rendered renderChunks (SongRenderer& r, int numTracks, int chunks, double rate, double transpose = 0.0)
 {
     Rendered out;
     out.left.resize ((size_t) numTracks);
@@ -87,7 +87,7 @@ static Rendered renderChunks (SongRenderer& r, int numTracks, int chunks, double
     for (int k = 0; k < chunks; ++k)
     {
         ChunkMeta m;
-        r.render (buf.getArrayOfWritePointers(), rate, m);
+        r.render (buf.getArrayOfWritePointers(), rate, transpose, m);
         out.meta.push_back (m);
         for (int t = 0; t < numTracks; ++t)
             out.left[(size_t) t].insert (out.left[(size_t) t].end(), buf.getReadPointer (t * 2), buf.getReadPointer (t * 2) + ChunkRing::chunkFrames);
@@ -250,6 +250,50 @@ static void testStretchQuality()
     CHECK (std::abs (levelStretched - levelIn) < 1.0);
 }
 
+static void testTranspose()
+{
+    std::printf ("[stretch] key change: music up 2 semitones, click untouched\n");
+    const int length = (int) (4.0 * engineRate);
+    auto sine = [&] (double hz) {
+        juce::AudioBuffer<float> b (2, length);
+        for (int c = 0; c < 2; ++c)
+            for (int n = 0; n < length; ++n)
+                b.setSample (c, n, 0.4f * (float) std::sin (juce::MathConstants<double>::twoPi * hz * n / engineRate));
+        return b;
+    };
+    auto data = std::make_shared<SongData>();
+    data->sampleRate = engineRate;
+    data->lengthSamples = length;
+    for (auto [hz, role] : { std::pair<double, int> { 440.0, roleMusic }, { 1000.0, roleClick } }) // click: never transposed
+    {
+        TrackData t;
+        t.audio = sine (hz);
+        t.role = role;
+        data->tracks.push_back (std::move (t));
+    }
+    SongPtr song = data;
+    SongRenderer r;
+    r.prepare (song);
+    r.seek (0.0, 1.0, 2.0);
+    const auto out = renderChunks (r, 2, (int) (3.0 * engineRate / ChunkRing::chunkFrames), 1.0, 2.0);
+    const size_t from = (size_t) engineRate, to = (size_t) (2.5 * engineRate);
+    const double music = dominantFrequency (out.left[0], from, to);
+    const double click = dominantFrequency (out.left[1], from, to);
+    const double levelChange = rmsDb (out.left[0], from, to) - 20.0 * std::log10 (0.4 / std::sqrt (2.0));
+    std::printf ("  music 440 Hz -> %.1f Hz (expected 493.9), click 1000 Hz -> %.1f Hz, music level change %.2f dB\n", music, click, levelChange);
+    CHECK (std::abs (music - 493.88) < 3.0);
+    CHECK (std::abs (click - 1000.0) < 3.0);
+    CHECK (std::abs (levelChange) < 1.5);
+
+    // Back to the original key at the original tempo: untouched audio again.
+    r.seek (0.0, 1.0, 0.0);
+    const auto direct = renderChunks (r, 2, 4, 1.0, 0.0);
+    bool exact = true;
+    for (int n = 0; n < 4 * ChunkRing::chunkFrames; ++n)
+        exact = exact && direct.left[0][(size_t) n] == song->tracks[0].audio.getSample (0, n);
+    CHECK (exact);
+}
+
 static void testRenderSpeed()
 {
     std::printf ("[performance] render speed with time-stretch (this machine)\n");
@@ -280,7 +324,7 @@ static void testRenderSpeed()
         for (int k = 0; k < chunks; ++k)
         {
             ChunkMeta m;
-            r.render (buf.getArrayOfWritePointers(), rate, m);
+            r.render (buf.getArrayOfWritePointers(), rate, 0.0, m);
         }
         const double secs = std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count();
         const double load = secs / 20.0;
@@ -865,6 +909,7 @@ int main (int argc, char** argv)
     testDirectPlaybackIsBitExact();
     testStretchSyncAndTiming();
     testStretchQuality();
+    testTranspose();
     testPlayerTransport();
     testOutputRouting();
     testTestTone();

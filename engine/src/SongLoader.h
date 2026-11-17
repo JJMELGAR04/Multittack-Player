@@ -18,10 +18,11 @@ struct TrackRequest
     std::string name;
     int role = -1; // TrackRoleCode, -1 = infer from the name
     int bus = -1;  // BusCode, -1 = click/guide -> monitor, music -> main
+    bool voice = false; // sung vocals (formant-preserving transposition)
 
     bool operator== (const TrackRequest& o) const
     {
-        return path == o.path && name == o.name && role == o.role && bus == o.bus;
+        return path == o.path && name == o.name && role == o.role && bus == o.bus && voice == o.voice;
     }
 };
 

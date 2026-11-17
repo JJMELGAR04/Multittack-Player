@@ -237,6 +237,7 @@ static bool parseTrackRequests (lp_engine* engine, const juce::var& parsed, std:
         const auto bus = t.getProperty ("bus", {}).toString();
         if (bus == "monitor") r.bus = liveplayer::busMonitor;
         else if (bus == "main") r.bus = liveplayer::busMain;
+        r.voice = (bool) t.getProperty ("voice", false);
         if (r.path.empty())
         {
             engine->impl.setLastError ("Solicitud inválida: pista sin \"path\"");
@@ -431,6 +432,17 @@ lp_result lp_engine_schedule_jump (lp_engine* engine, double at_sec, double targ
     });
 }
 
+lp_result lp_engine_set_transpose (lp_engine* engine, double semitones)
+{
+    if (engine == nullptr || ! std::isfinite (semitones) || semitones < -12.0 || semitones > 12.0)
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] {
+        LP_REQUIRE_SONG (engine);
+        engine->impl.getPlayer().setTranspose (semitones);
+        return LP_OK;
+    });
+}
+
 lp_result lp_engine_cancel_jump (lp_engine* engine)
 {
     if (engine == nullptr)
@@ -507,6 +519,7 @@ lp_result lp_engine_get_transport (lp_engine* engine, lp_transport_state* out_st
         out_state->loop_end = s.loopEnd;
         out_state->min_jump_lead_sec = engine->impl.getPlayer().minJumpLeadSeconds();
         out_state->jumps_done = s.jumpsDone;
+        out_state->transpose = s.transpose;
         return LP_OK;
     });
 }

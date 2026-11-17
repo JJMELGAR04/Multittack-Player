@@ -39,10 +39,14 @@ public:
     int numOutputChannels() const noexcept { return (int) tracks.size() * 2; }
 
     /** Repositions playback so the next rendered frame is song sample `sourcePos`. */
-    void seek (double sourcePos, double targetRate);
+    void seek (double sourcePos, double targetRate, double transposeSemitones = 0.0);
 
-    /** Renders ChunkRing::chunkFrames frames for every track into `out`. */
-    void render (float* const* out, double targetRate, ChunkMeta& meta);
+    /** Renders ChunkRing::chunkFrames frames for every track into `out`.
+        `transposeSemitones` shifts the pitch of the music tracks (tempo kept);
+        tracks marked pitch-fixed (click, cues) are never transposed. */
+    void render (float* const* out, double targetRate, double transposeSemitones, ChunkMeta& meta);
+    /** Click / cues: never transposed (updated when the user changes a track's role). */
+    void setPitchFixed (size_t track, bool fixed) noexcept;
 
     double currentRate() const noexcept { return rate; }
     /** Song position (samples) of the next frame render() will produce. */
@@ -64,12 +68,15 @@ private:
     void renderStretch (float* const* out, int frames, double atRate);
     void stretchTrack (size_t index, float* const* out, int frames, int inCount);
     void updateRate (double targetRate);
+    void applyTranspose (double semitones);
+    bool needsStretch() const noexcept;
 
     SongPtr song;
     std::vector<std::unique_ptr<Track>> tracks;
 
     Mode mode = Mode::direct;
     double rate = 1.0;
+    double transpose = 0.0;
     juce::int64 directPos = 0;
     double stretchOutPos = 0.0;      // song position of the next stretched output frame
     juce::int64 stretchInFeed = 0;   // next song sample to feed the stretchers

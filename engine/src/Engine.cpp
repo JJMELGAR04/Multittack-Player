@@ -391,8 +391,12 @@ void Engine::maintainDevice()
     lastTypeName = type;
     lastDeviceName = name;
 
+    // Scanning the device list can take tens of ms on some computers (and runs
+    // on the control thread): often only while waiting for the chosen interface
+    // to be plugged in; otherwise rarely (Windows also reports lost devices).
+    const bool waitingForPreferred = hasPreferred && ! (type == preferred.typeName && name == preferred.deviceName);
     const auto now = juce::Time::getMillisecondCounter();
-    if (now - lastScanMs >= 1500)
+    if (now - lastScanMs >= (waitingForPreferred ? 2000u : 5000u))
     {
         lastScanMs = now;
 
@@ -443,6 +447,7 @@ void Engine::startRateReload()
     reloadPosition = snap.positionSec;
     reloadPlaying = snap.playState == 1;
     reloadTempo = player.getTempoTarget();
+    reloadTranspose = player.getTranspose();
     for (size_t i = 0; i < songRequests.size() && i < trackRoles.size(); ++i)
     {
         songRequests[i].role = trackRoles[i];
@@ -762,6 +767,7 @@ bool Engine::setTrackRoute (int track, int bus, int role)
     trackBuses[(size_t) track] = bus == busMonitor ? busMonitor : busMain;
     trackRoles[(size_t) track] = juce::jlimit (0, 2, role);
     player.setTrackBus (track, trackBuses[(size_t) track]);
+    player.setTrackPitchFixed (track, trackRoles[(size_t) track] != roleMusic);
     mixPeaksDirty = true;
     updateBusTrims();
     return true;
@@ -829,6 +835,9 @@ void Engine::finishRateReload()
     for (size_t t = 0; t < trackGains.size(); ++t)
         player.setTrackGain ((int) t, trackGains[t]);
     player.setTempoRatio (reloadTempo);
+    player.setTranspose (reloadTranspose);
+    for (size_t t = 0; t < trackRoles.size(); ++t)
+        player.setTrackPitchFixed ((int) t, trackRoles[t] != roleMusic);
     if (callbackAttached)
         deviceManager.addAudioCallback (&player);
 
