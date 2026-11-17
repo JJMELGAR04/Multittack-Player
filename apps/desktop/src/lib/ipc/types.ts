@@ -227,6 +227,13 @@ export interface TransportState {
   monitorLimiterGain: number;
 }
 
+/** Peak levels (linear) since the previous read. */
+export interface Meters {
+  tracks: number[];
+  main: [number, number];
+  monitor: [number, number];
+}
+
 /** stereo: everything on 1/2 · split: instruments out 1, click+cues out 2 · quad: 1/2 + 3/4. */
 export type OutputMode = "stereo" | "split" | "quad";
 

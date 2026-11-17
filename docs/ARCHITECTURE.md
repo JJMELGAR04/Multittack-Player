@@ -106,6 +106,7 @@ En el escritorio, el hilo principal ejecuta el bucle de mensajes nativo (Win32 e
 | `studio_import_commit(commit)` / `studio_import_cancel` | guarda la canción con lo confirmado (sin volver a decodificar) / descarta y borra lo extraído | sí |
 | `studio_set_track_gain` / `studio_update_track` / `studio_set_song_info` | escuchar una pista sola / cambiar nombre o rol (su salida sigue al rol) / título y compás | sí / sí / no |
 | `studio_set_output` / `studio_output_settings` | modo de salida y volumen de click/cues (se guardan) | sí |
+| `studio_meters` | picos desde la lectura anterior: uno por pista + PA L/R + banda L/R (la UI lee ~25 veces/s y anima los medidores en `requestAnimationFrame`, sin renders de React) | sí |
 
 Los comandos son síncronos y cortos: el trabajo pesado (decodificar, analizar) ocurre en hilos del motor y la UI consulta `studio_status` (cada 250 ms mientras hay trabajo) y `transport_state` (25 veces por segundo; el cursor se interpola entre lecturas).
 

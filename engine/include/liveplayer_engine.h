@@ -29,7 +29,7 @@
 extern "C" {
 #endif
 
-#define LP_ENGINE_ABI_VERSION 3u
+#define LP_ENGINE_ABI_VERSION 4u
 
 typedef struct lp_engine lp_engine;
 
@@ -185,6 +185,14 @@ lp_result lp_engine_set_track_gain(lp_engine* engine, int32_t track, double gain
 lp_result lp_engine_set_output_mode(lp_engine* engine, int32_t mode);
 /** Volume of the monitor bus (click + cues), linear 0..2. Smoothed. */
 lp_result lp_engine_set_monitor_gain(lp_engine* engine, double gain);
+
+/**
+ * Level meters: peak (linear) reached since the previous call, then reset.
+ * Layout: one value per track (after its gain), then main L, main R,
+ * monitor L, monitor R (after the safety limiters). *out_count receives the
+ * number of values (tracks + 4). Two-call pattern on the float count.
+ */
+lp_result lp_engine_get_meters(lp_engine* engine, float* values, size_t capacity, size_t* out_count);
 
 /* ---- Transport ---- */
 

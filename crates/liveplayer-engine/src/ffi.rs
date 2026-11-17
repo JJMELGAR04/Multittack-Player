@@ -3,7 +3,7 @@
 
 use std::ffi::{c_char, c_int};
 
-pub const ABI_VERSION: u32 = 3;
+pub const ABI_VERSION: u32 = 4;
 
 #[repr(C)]
 pub struct lp_engine {
@@ -91,6 +91,8 @@ unsafe extern "C" {
     pub fn lp_engine_set_track_gain(engine: *mut lp_engine, track: i32, gain: f64) -> lp_result;
     pub fn lp_engine_set_output_mode(engine: *mut lp_engine, mode: i32) -> lp_result;
     pub fn lp_engine_set_monitor_gain(engine: *mut lp_engine, gain: f64) -> lp_result;
+    pub fn lp_engine_get_meters(engine: *mut lp_engine, values: *mut f32, capacity: usize, out_count: *mut usize)
+    -> lp_result;
 
     pub fn lp_engine_play(engine: *mut lp_engine) -> lp_result;
     pub fn lp_engine_pause(engine: *mut lp_engine) -> lp_result;

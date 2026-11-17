@@ -4,6 +4,7 @@ import type {
   ImportCommit,
   ImportDraft,
   ImportTrack,
+  Meters,
   OutputInfo,
   OutputSettings,
   SectionRecord,
@@ -15,7 +16,18 @@ import type {
   TrackRole,
   TransportState,
 } from "@/lib/ipc/types";
-import { beatsPerBar, clampRatio, fromDetected, renumber, roundBpm } from "./model";
+import { beatsPerBar, clampRatio, effectiveGains, fromDetected, renumber, roundBpm } from "./model";
+
+/** Live meter values shared without React re-renders (read by the meters' rAF loops). */
+export interface MeterStore {
+  current: Meters;
+}
+
+export interface MixerState {
+  volumesDb: number[];
+  mute: boolean[];
+  solo: boolean[];
+}
 
 export interface Peaks {
   loadId: number;
@@ -67,6 +79,13 @@ export interface Studio {
   setOutput: (settings: OutputSettings) => void;
   updateTrack: (position: number, name: string, role: TrackRole) => void;
   setSongInfo: (title: string, timeSignature: TimeSignature) => void;
+
+  // Mixer (volume / mute / solo per track; persisted from phase 3 on).
+  meters: MeterStore;
+  mixer: MixerState;
+  setTrackVolume: (track: number, db: number) => void;
+  toggleMute: (track: number) => void;
+  toggleSolo: (track: number) => void;
 }
 
 function message(e: unknown): string {
@@ -92,6 +111,8 @@ export function useStudio(): Studio {
   const [importDraft, setImportDraft] = useState<ImportDraft | null>(null);
   const [soloTrack, setSoloTrack] = useState<number | null>(null);
   const [outputSettings, setOutputSettings] = useState<OutputSettings | null>(null);
+  const meters = useRef<Meters>({ tracks: [], main: [0, 0], monitor: [0, 0] });
+  const [mixer, setMixer] = useState<MixerState>({ volumesDb: [], mute: [], solo: [] });
 
   const songRef = useRef<SongRecord | null>(null);
   songRef.current = song;
@@ -160,6 +181,21 @@ export function useStudio(): Studio {
     };
   }, [native]);
 
+  // Level meters, ~25 reads per second (peaks since the previous read).
+  useEffect(() => {
+    if (!native) return;
+    let alive = true;
+    const id = window.setInterval(() => {
+      backend.studioMeters().then((m) => {
+        if (alive) meters.current = m;
+      }, () => {});
+    }, 40);
+    return () => {
+      alive = false;
+      window.clearInterval(id);
+    };
+  }, [native]);
+
   // A song (or an import preview) finished loading: waveforms, record, tempo.
   useEffect(() => {
     const eng = status?.engine;
@@ -170,6 +206,7 @@ export function useStudio(): Studio {
     const loadId = eng.loadId;
     const trackCount = eng.song.tracks.length;
     const songId = status.songId;
+    setMixer({ volumesDb: Array(trackCount).fill(0), mute: Array(trackCount).fill(false), solo: Array(trackCount).fill(false) });
 
     (async () => {
       if (songId != null) {
@@ -444,6 +481,30 @@ export function useStudio(): Studio {
     [later],
   );
 
+  const applyMixer = useCallback(
+    (next: MixerState) => {
+      setMixer(next);
+      const gains = effectiveGains(next.volumesDb, next.mute, next.solo);
+      run(Promise.all(gains.map((g, i) => backend.studioSetTrackGain(i, Math.min(2, g)))));
+    },
+    [run],
+  );
+
+  const setTrackVolume = useCallback(
+    (track: number, db: number) => {
+      applyMixer({ ...mixer, volumesDb: mixer.volumesDb.map((v, i) => (i === track ? db : v)) });
+    },
+    [mixer, applyMixer],
+  );
+  const toggleMute = useCallback(
+    (track: number) => applyMixer({ ...mixer, mute: mixer.mute.map((v, i) => (i === track ? !v : v)) }),
+    [mixer, applyMixer],
+  );
+  const toggleSolo = useCallback(
+    (track: number) => applyMixer({ ...mixer, solo: mixer.solo.map((v, i) => (i === track ? !v : v)) }),
+    [mixer, applyMixer],
+  );
+
   const setSongInfo = useCallback(
     (title: string, timeSignature: TimeSignature) => {
       const current = songRef.current;
@@ -490,5 +551,10 @@ export function useStudio(): Studio {
     setOutput,
     updateTrack,
     setSongInfo,
+    meters,
+    mixer,
+    setTrackVolume,
+    toggleMute,
+    toggleSolo,
   };
 }

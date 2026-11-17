@@ -67,7 +67,7 @@ try {
   const text = await evaluate("document.body.innerText");
   check("isTauri() true (no 'fuera de la aplicación' banner)", !text.includes("fuera de la aplicación de escritorio"));
   check("engine_info: JUCE 9.0.5", text.includes("9.0.5"));
-  check("engine_info: ABI v3", text.includes("v3"));
+  check("engine_info: ABI v4", text.includes("v4"));
   check("audio_diagnostics: Windows Audio listed", text.includes("Windows Audio"));
   check("database_status: songs tables (schema 2)", text.includes("songs") && text.includes("song_sections"));
   check("app_info: windows", text.includes("windows"));
@@ -129,10 +129,31 @@ try {
   let t = await transport();
   check("play advances the position", t.playState === "playing" && t.positionSec > 1.0 && t.positionSec < 2.2, `${t.positionSec.toFixed(2)} s`);
 
+
   await clickButton("Coro 2");
   await sleep(400);
   t = await transport();
   check("click on section Coro 2 jumps there and keeps playing", t.playState === "playing" && t.positionSec >= 70 && t.positionSec < 70.8, `${t.positionSec.toFixed(2)} s`);
+
+  // Mixer (full band in the chorus): meters move; M mutes a track.
+  const peakOver = async (ms) => {
+    await invoke("studio_meters");
+    const max = [];
+    for (let k = 0; k < ms / 100; k++) {
+      await sleep(100);
+      (await invoke("studio_meters")).tracks.forEach((v, i) => (max[i] = Math.max(max[i] ?? 0, v)));
+    }
+    return max;
+  };
+  let peaks = await peakOver(1000);
+  check("track meters move while playing", peaks.filter((v) => v > 0.01).length === 5, peaks.map((v) => v.toFixed(2)).join(" "));
+  const bassIndex = (await invoke("studio_status")).engine.song.tracks.findIndex((tr) => tr.name === "Bass");
+  await clickButton("Silenciar Bass");
+  await sleep(200);
+  peaks = await peakOver(600);
+  check("mute (M) silences only that track", peaks[bassIndex] === 0 && peaks.filter((v) => v > 0.01).length === 4, peaks.map((v) => v.toFixed(2)).join(" "));
+  await shot("03b-studio-playing");
+  await clickButton("Silenciar Bass");
 
   for (let i = 0; i < 8; i++) { await clickButton("Subir 1 BPM"); await sleep(80); }
   await sleep(1500);

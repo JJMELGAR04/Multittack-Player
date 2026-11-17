@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { SectionRecord } from "@/lib/ipc/types";
 import {
+  barBeat,
+  effectiveGains,
+  meterFraction,
+  textOn,
   dbToGain,
   formatBpm,
   formatDb,
@@ -69,6 +73,26 @@ describe("tempo", () => {
     expect(tapTempo([0, 500])).toBeNull();
     // A long pause starts a new measurement.
     expect(tapTempo([0, 500, 1000, 9000, 9600, 10200])).toBe(100);
+  });
+});
+
+describe("mixer and meters", () => {
+  it("applies mute and solo like a console", () => {
+    expect(effectiveGains([0, 0, -6], [false, true, false], [false, false, false])).toEqual([1, 0, dbToGain(-6)]);
+    // Solo: only soloed tracks sound, even if muted ones exist.
+    expect(effectiveGains([0, 0, 0], [false, true, false], [false, true, false])).toEqual([0, 1, 0]);
+    expect(effectiveGains([-60, 0], [false, false], [false, false])).toEqual([0, 1]);
+  });
+
+  it("maps peaks to the meter scale and finds bar/beat", () => {
+    expect(meterFraction(0)).toBe(0);
+    expect(meterFraction(1)).toBeCloseTo(60 / 66, 6);
+    expect(meterFraction(10)).toBe(1);
+    expect(barBeat(0, 96, 0, 4)).toEqual({ bar: 1, beat: 1 });
+    expect(barBeat(2.5 * 3 + 0.625 * 2 + 0.01, 96, 0, 4)).toEqual({ bar: 4, beat: 3 });
+    expect(barBeat(10, null, 0, 4)).toBeNull();
+    expect(textOn("#e8c21b")).toBe("#0a0b0d");
+    expect(textOn("#1d4ed8")).toBe("#ffffff");
   });
 });
 

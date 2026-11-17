@@ -9,6 +9,7 @@ import type {
   ImportCommit,
   ImportDraft,
   ImportTrack,
+  Meters,
   OutputInfo,
   OutputSettings,
   TrackRole,
@@ -104,6 +105,7 @@ export const backend = {
   setMasterGain: (gain: number) => call<void>("transport_set_master_gain", { gain }),
   setTempoRatio: (ratio: number) => call<void>("transport_set_tempo_ratio", { ratio }),
   transportState: () => call<TransportState>("transport_state"),
+  studioMeters: () => call<Meters>("studio_meters"),
 };
 
 export const isNativeAvailable = (): boolean => isTauri();

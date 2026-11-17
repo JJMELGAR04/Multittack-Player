@@ -1,15 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, AudioLines, FolderOpen, ListMusic, Music, SlidersHorizontal, Tags, X } from "lucide-react";
-import { Panel } from "@/components/ui/Panel";
-import type { SectionRecord, TimeSignature } from "@/lib/ipc/types";
+import { Activity, ChevronDown, ChevronUp, FolderOpen, Gauge, ListMusic, SlidersHorizontal, Tags, X } from "lucide-react";
+import type { OutputMode, SectionRecord } from "@/lib/ipc/types";
+import { Arrange } from "./Arrange";
 import { ImportDialog } from "./ImportDialog";
-import { beatsPerBar, kindLabel, sectionAt, snapToBar, TIME_SIGNATURES, withEnds } from "./model";
+import { Mixer } from "./Mixer";
+import { beatsPerBar, dbToGain, gainToDb, kindLabel, sectionAt, snapToBar, withEnds } from "./model";
 import { OutputPanel, TracksPanel } from "./OutputPanel";
 import { SectionsPanel } from "./SectionsPanel";
 import { TempoControl } from "./TempoControl";
-import { Timeline } from "./Timeline";
-import { TransportBar } from "./TransportBar";
+import { Toolbar } from "./Toolbar";
 import { useStudio, type Studio } from "./useStudio";
+
+type DockTab = "mixer" | "sections" | "tempo" | "outputs" | "tracks" | "engine";
+const DOCK_TABS: { id: DockTab; label: string; icon: typeof Activity }[] = [
+  { id: "mixer", label: "Mezclador", icon: SlidersHorizontal },
+  { id: "sections", label: "Partes", icon: ListMusic },
+  { id: "tempo", label: "Tempo", icon: Gauge },
+  { id: "outputs", label: "Salidas", icon: SlidersHorizontal },
+  { id: "tracks", label: "Pistas", icon: Tags },
+  { id: "engine", label: "Motor", icon: Activity },
+];
 
 const AUDIO_EXTENSIONS = ["wav", "wave", "mp3", "aif", "aiff", "flac", "ogg"];
 const IMPORT_EXTENSIONS = ["zip", ...AUDIO_EXTENSIONS];
@@ -92,6 +102,8 @@ export function StudioPage() {
   const previewReady = engine?.state === "ready" && !!engine.song && status?.songId == null;
   const analysing = engine?.analysis?.state === "running";
   const [editing, setEditing] = useState(false);
+  const [dock, setDock] = useState<DockTab>("mixer");
+  const [dockOpen, setDockOpen] = useState(true);
 
   const durationSec = loaded?.durationSec ?? 0;
   const sections = useMemo(() => withEnds(song?.sections ?? [], durationSec), [song?.sections, durationSec]);
@@ -138,69 +150,47 @@ export function StudioPage() {
     studio.saveSections([...base, { startSec: at, kind: "section", label: kindLabel("section"), source: "user" }]);
   };
 
+  const tracks = loaded
+    ? loaded.tracks.map((t, i) => {
+        const rec = song?.tracks.find((r) => r.position === i);
+        return { index: i, name: rec?.name ?? t.name, role: rec?.role ?? "other", bus: rec?.bus ?? t.bus };
+      })
+    : [];
+  const outputMode: OutputMode = studio.outputSettings?.mode ?? transport?.outputMode ?? "stereo";
+  const monitorGain = studio.outputSettings?.monitorGain ?? 1;
+  const setOutputMode = (mode: OutputMode) => studio.setOutput({ mode, monitorGain });
+
   return (
-    <div className="mx-auto max-w-7xl px-8 py-6">
-      <header className="mb-5 flex flex-wrap items-center gap-3">
-        <AudioLines className="text-info-400" size={26} />
-        <div className="min-w-0 flex-1">
-          <h1 className="text-2xl font-bold">Multitrack Studio</h1>
-          <p className="truncate text-sm text-ink-300">
-            {song ? song.title : "Abre el zip o las pistas de una canción para empezar."}
-          </p>
-        </div>
-        {song && (
-          <label className="flex items-center gap-2 text-xs text-ink-300">
-            Compás
-            <select
-              aria-label="Compás de la canción"
-              value={song.timeSignature}
-              onChange={(e) => studio.setSongInfo(song.title, e.target.value as TimeSignature)}
-              className="rounded-md border border-ink-700 bg-ink-900 px-2 py-1.5 text-sm text-ink-100"
-            >
-              {TIME_SIGNATURES.map((t) => (
-                <option key={t.value} value={t.value}>
-                  {t.value}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        {studio.recent.length > 0 && (
-          <label className="flex items-center gap-2 text-xs text-ink-300">
-            <ListMusic size={16} />
-            <select
-              aria-label="Canciones recientes"
-              value=""
-              onChange={(e) => e.target.value && studio.openSong(Number(e.target.value))}
-              className="max-w-56 rounded-md border border-ink-700 bg-ink-900 px-2 py-1.5 text-sm text-ink-100"
-            >
-              <option value="">Recientes…</option>
-              {studio.recent.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.title} ({r.trackCount} pistas)
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        <button
-          type="button"
-          onClick={open}
-          disabled={!studio.native}
-          className="flex items-center gap-2 rounded-lg border border-info-500 bg-info-500/15 px-4 py-2 text-sm font-semibold text-info-400 hover:bg-info-500/25 disabled:opacity-40"
-        >
-          <FolderOpen size={16} /> Abrir pistas
-        </button>
-      </header>
+    <div className="flex h-full flex-col overflow-hidden">
+      <Toolbar
+        native={studio.native}
+        song={loaded ? song : null}
+        recent={studio.recent}
+        transport={transport}
+        output={studio.output}
+        outputMode={outputMode}
+        ratio={studio.ratio}
+        beatsPerBar={beats}
+        ready={!!loaded}
+        onOpen={open}
+        onOpenRecent={(id) => void studio.openSong(id)}
+        onMeter={(ts) => song && studio.setSongInfo(song.title, ts)}
+        onPlay={studio.play}
+        onPause={studio.pause}
+        onStop={studio.stop}
+        onRestart={() => studio.seek(0)}
+        onTargetBpm={studio.setTargetBpm}
+        onOutputMode={setOutputMode}
+      />
 
       {!studio.native && (
-        <p className="mb-4 rounded-lg border border-live-500/40 bg-live-500/10 px-4 py-3 text-sm text-live-400">
+        <p className="m-4 rounded-lg border border-live-500/40 bg-live-500/10 px-4 py-3 text-sm text-live-400">
           La interfaz se está ejecutando fuera de la aplicación de escritorio: no hay motor de audio disponible.
         </p>
       )}
 
       {studio.error && (
-        <div role="alert" className="mb-4 flex items-start gap-3 rounded-lg border border-stop-500/50 bg-stop-500/10 px-4 py-3 text-sm text-stop-500">
+        <div role="alert" className="mx-4 mt-3 flex items-start gap-3 rounded-lg border border-stop-500/50 bg-stop-500/10 px-4 py-2 text-sm text-stop-500">
           <span className="flex-1">{studio.error}</span>
           <button type="button" onClick={studio.clearError} aria-label="Cerrar aviso">
             <X size={16} />
@@ -210,25 +200,8 @@ export function StudioPage() {
 
       {hovering && (
         <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-info-500/10 text-xl font-semibold text-info-400 ring-4 ring-inset ring-info-500">
-          Suelta los archivos o la carpeta de la canción
+          Suelta el zip, la carpeta o los archivos de la canción
         </div>
-      )}
-
-      {engine?.state === "loading" && !studio.importDraft && (
-        <Panel title="Cargando canción" icon={<Music size={18} />} tone="pending" statusLabel={`${Math.round(engine.progress * 100)} %`}>
-          <div className="h-2 overflow-hidden rounded bg-ink-800">
-            <div className="h-full bg-info-500 transition-[width]" style={{ width: `${engine.progress * 100}%` }} />
-          </div>
-          <p className="mt-2 text-xs text-ink-400">
-            Decodificando y preparando las pistas en memoria (la reproducción no leerá del disco).
-          </p>
-        </Panel>
-      )}
-
-      {engine?.state === "error" && (
-        <p role="alert" className="mb-4 rounded-lg border border-stop-500/50 bg-stop-500/10 px-4 py-3 text-sm text-stop-500">
-          No se pudo cargar la canción: {engine.error}
-        </p>
       )}
 
       {studio.importDraft && (
@@ -244,135 +217,192 @@ export function StudioPage() {
         />
       )}
 
-      {!song && !studio.importDraft && engine?.state !== "loading" && (
-        <button
-          type="button"
-          onClick={open}
-          disabled={!studio.native}
-          className="flex w-full flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-ink-700 py-20 text-ink-300 hover:border-info-500 hover:text-info-400"
-        >
-          <FolderOpen size={40} />
-          <span className="text-lg font-semibold">Arrastra aquí el zip o la carpeta de la canción, o haz clic para elegir</span>
-          <span className="text-sm text-ink-400">ZIP, WAV, MP3, AIFF, FLAC u OGG · te preguntaré título, BPM, compás y qué es cada pista</span>
-        </button>
+      {engine?.state === "loading" && !studio.importDraft && (
+        <div className="m-4 rounded-xl border border-ink-800 bg-ink-900 px-5 py-4">
+          <p className="mb-2 text-sm text-ink-200">Cargando canción… {Math.round(engine.progress * 100)} %</p>
+          <div className="h-2 overflow-hidden rounded bg-ink-800">
+            <div className="h-full bg-info-500 transition-[width]" style={{ width: `${engine.progress * 100}%` }} />
+          </div>
+        </div>
+      )}
+
+      {engine?.state === "error" && (
+        <p role="alert" className="m-4 rounded-lg border border-stop-500/50 bg-stop-500/10 px-4 py-3 text-sm text-stop-500">
+          No se pudo cargar la canción: {engine.error}
+        </p>
+      )}
+
+      {!loaded && !studio.importDraft && engine?.state !== "loading" && (
+        <div className="flex flex-1 items-center justify-center p-8">
+          <button
+            type="button"
+            onClick={open}
+            disabled={!studio.native}
+            className="flex w-full max-w-3xl flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-ink-700 py-20 text-ink-300 hover:border-info-500 hover:text-info-400 disabled:opacity-50"
+          >
+            <FolderOpen size={40} />
+            <span className="text-lg font-semibold">Arrastra aquí el zip o la carpeta de la canción, o haz clic para elegir</span>
+            <span className="text-sm text-ink-400">ZIP, WAV, MP3, AIFF, FLAC u OGG · te preguntaré título, BPM, compás y qué es cada pista</span>
+          </button>
+        </div>
       )}
 
       {song && loaded && (
-        <div className="grid gap-4">
-          <section className="rounded-xl border border-ink-800 bg-ink-900 px-5 py-4">
-            <TransportBar
-              transport={transport}
-              disabled={!loaded}
-              onPlay={studio.play}
-              onPause={studio.pause}
-              onStop={studio.stop}
-              onRestart={() => studio.seek(0)}
-              onGain={studio.setGain}
-            />
-            <div className="mt-4 border-t border-ink-800 pt-4">
-              <TempoControl
-                song={song}
-                detected={engine?.analysis?.tempo}
-                analysing={analysing}
-                ratio={studio.ratio}
-                transport={transport}
-                onTargetBpm={studio.setTargetBpm}
-                onOriginalBpm={studio.setOriginalBpm}
-              />
-            </div>
-          </section>
-
-          <section className="overflow-hidden rounded-xl border border-ink-800 bg-ink-900 py-2">
-            <Timeline
+        <>
+          <div className="min-h-0 flex-1">
+            <Arrange
               durationSec={durationSec}
-              peaks={peaks?.loadId === engine?.loadId ? peaks : null}
-              trackNames={loaded.tracks.map((t, i) => song.tracks.find((r) => r.position === i)?.name ?? t.name)}
+              tracks={tracks}
+              peaks={peaks?.loadId === engine?.loadId ? (peaks?.tracks ?? null) : null}
               sections={sections}
               bpm={bpm}
               beatsPerBar={beats}
               downbeatSec={song.downbeatOffsetSec}
               transport={transport}
               transportAt={studio.transportAt}
+              meters={studio.meters}
+              mute={studio.mixer.mute}
+              solo={studio.mixer.solo}
               editing={editing}
               selected={current}
               onSeek={studio.seek}
               onSectionClick={(i) => studio.playFrom(sections[i]?.startSec ?? 0)}
               onSectionMove={moveSection}
+              onMute={studio.toggleMute}
+              onSolo={studio.toggleSolo}
             />
-          </section>
-
-          <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
-            <Panel title="Partes de la canción" icon={<ListMusic size={18} />}>
-              <SectionsPanel
-                sections={sections}
-                current={current}
-                editing={editing}
-                analysing={analysing}
-                redetecting={studio.redetecting}
-                barSec={barSec}
-                onEditing={setEditing}
-                onPlayFrom={(i) => studio.playFrom(sections[i]?.startSec ?? 0)}
-                onChange={studio.saveSections}
-                onAddAtCursor={addAtCursor}
-                onRedetect={studio.redetectSections}
-              />
-              <p className="mt-3 text-xs text-ink-400">
-                Atajos: Espacio reproducir/pausa · Esc detener · Inicio volver al principio · 1–9 tocar desde la sección.
-                {editing && " Arrastra el borde izquierdo de una sección para moverla (se ajusta al compás; Alt = libre)."}
-              </p>
-            </Panel>
-
-            <Panel
-              title="Motor de audio"
-              icon={<Activity size={18} />}
-              tone={transport && transport.underruns > 0 ? "warn" : "ok"}
-              statusLabel={transport && transport.underruns > 0 ? `${transport.underruns} cortes` : "Sin cortes"}
-            >
-              <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-                <dt className="text-ink-400">Salida</dt>
-                <dd className="truncate text-right text-ink-100" title={studio.output?.deviceName}>{studio.output?.deviceName ?? "—"}</dd>
-                <dt className="text-ink-400">Formato</dt>
-                <dd className="text-right font-mono text-ink-100">
-                  {studio.output?.sampleRate ? `${studio.output.sampleRate / 1000} kHz · ${studio.output.bufferSize} muestras` : "—"}
-                </dd>
-                <dt className="text-ink-400">Latencia de salida</dt>
-                <dd className="text-right font-mono text-ink-100">{studio.output?.outputLatencyMs ? `${studio.output.outputLatencyMs.toFixed(1)} ms` : "—"}</dd>
-                <dt className="text-ink-400">Carga del audio</dt>
-                <dd className="text-right font-mono text-ink-100">{transport ? pct(transport.audioLoad) : "—"}</dd>
-                <dt className="text-ink-400">Carga de render</dt>
-                <dd className="text-right font-mono text-ink-100">{transport ? pct(transport.renderLoad) : "—"}</dd>
-                <dt className="text-ink-400">Cortes del render</dt>
-                <dd className="text-right font-mono text-ink-100">{transport?.underruns ?? 0}</dd>
-                <dt className="text-ink-400">Fallos del driver</dt>
-                <dd className="text-right font-mono text-ink-100">{transport?.deviceXruns ?? "n/d"}</dd>
-                <dt className="text-ink-400">Memoria de audio</dt>
-                <dd className="text-right font-mono text-ink-100">{Math.round(loaded.memoryMB)} MB</dd>
-              </dl>
-              <ul className="mt-3 grid gap-1 border-t border-ink-800 pt-3 text-xs">
-                {loaded.tracks.map((t) => (
-                  <li key={t.path} className="flex justify-between gap-2" title={t.path}>
-                    <span className="truncate text-ink-200">{t.name}</span>
-                    <span className="shrink-0 font-mono text-ink-400">
-                      {t.format} · {t.sourceSampleRate / 1000} kHz{t.resampled ? " → convertido" : ""} · {t.channels === 1 ? "mono" : "estéreo"}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </Panel>
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-2">
-            <Panel title="Salidas" icon={<SlidersHorizontal size={18} />}>
-              <OutputPanel settings={studio.outputSettings} transport={transport} song={loaded} onChange={studio.setOutput} />
-            </Panel>
-            <Panel title="Pistas" icon={<Tags size={18} />}>
-              <TracksPanel song={song} onUpdate={studio.updateTrack} />
-              <p className="mt-3 text-xs text-ink-400">
-                Cambia qué es cada archivo si se reconoció mal: el click y las cues salen solo hacia la banda.
-              </p>
-            </Panel>
+          {/* Bottom dock */}
+          <div className="flex shrink-0 flex-col border-t-2 border-ink-700 bg-ink-900" style={{ height: dockOpen ? 300 : 34 }}>
+            <div className="flex h-8 shrink-0 items-center gap-1 border-b border-ink-800 px-2" role="tablist" aria-label="Paneles del Studio">
+              {DOCK_TABS.map((t) => {
+                const Icon = t.icon;
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={dock === t.id}
+                    onClick={() => {
+                      setDock(t.id);
+                      setDockOpen(true);
+                    }}
+                    className={`flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[11px] font-semibold uppercase tracking-wider ${
+                      dock === t.id && dockOpen ? "bg-ink-800 text-info-400" : "text-ink-400 hover:text-ink-100"
+                    }`}
+                  >
+                    <Icon size={13} /> {t.label}
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                onClick={() => setDockOpen(!dockOpen)}
+                aria-label={dockOpen ? "Ocultar panel" : "Mostrar panel"}
+                className="ml-auto rounded p-1 text-ink-400 hover:text-ink-100"
+              >
+                {dockOpen ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+              </button>
+            </div>
+
+            {dockOpen && (
+              <div className="min-h-0 flex-1 overflow-hidden" role="tabpanel">
+                {dock === "mixer" && (
+                  <Mixer
+                    tracks={tracks}
+                    volumesDb={studio.mixer.volumesDb}
+                    mute={studio.mixer.mute}
+                    solo={studio.mixer.solo}
+                    meters={studio.meters}
+                    masterDb={gainToDb(transport?.masterGain ?? 1)}
+                    monitorDb={gainToDb(monitorGain)}
+                    limiting={{ main: (transport?.mainLimiterGain ?? 1) < 0.999, monitor: (transport?.monitorLimiterGain ?? 1) < 0.999 }}
+                    onVolume={studio.setTrackVolume}
+                    onMute={studio.toggleMute}
+                    onSolo={studio.toggleSolo}
+                    onMaster={(db) => studio.setGain(dbToGain(db))}
+                    onMonitor={(db) => studio.setOutput({ mode: outputMode, monitorGain: dbToGain(db) })}
+                  />
+                )}
+                {dock === "sections" && (
+                  <div className="h-full overflow-y-auto p-4">
+                    <SectionsPanel
+                      sections={sections}
+                      current={current}
+                      editing={editing}
+                      analysing={analysing}
+                      redetecting={studio.redetecting}
+                      barSec={barSec}
+                      onEditing={setEditing}
+                      onPlayFrom={(i) => studio.playFrom(sections[i]?.startSec ?? 0)}
+                      onChange={studio.saveSections}
+                      onAddAtCursor={addAtCursor}
+                      onRedetect={studio.redetectSections}
+                    />
+                    <p className="mt-3 text-xs text-ink-400">
+                      Atajos: Espacio reproducir/pausa · Esc detener · Inicio volver al principio · 1–9 tocar desde la parte.
+                      {editing && " Arrastra el borde izquierdo de una parte (arriba, en el carril de partes) para moverla; se ajusta al compás (Alt = libre)."}
+                    </p>
+                  </div>
+                )}
+                {dock === "tempo" && (
+                  <div className="h-full overflow-y-auto p-4">
+                    <TempoControl
+                      song={song}
+                      detected={engine?.analysis?.tempo}
+                      analysing={analysing}
+                      ratio={studio.ratio}
+                      transport={transport}
+                      onTargetBpm={studio.setTargetBpm}
+                      onOriginalBpm={studio.setOriginalBpm}
+                    />
+                  </div>
+                )}
+                {dock === "outputs" && (
+                  <div className="h-full overflow-y-auto p-4">
+                    <OutputPanel settings={studio.outputSettings} transport={transport} song={loaded} onChange={studio.setOutput} />
+                  </div>
+                )}
+                {dock === "tracks" && (
+                  <div className="h-full overflow-y-auto p-4">
+                    <TracksPanel song={song} onUpdate={studio.updateTrack} />
+                  </div>
+                )}
+                {dock === "engine" && (
+                  <div className="grid h-full grid-cols-2 gap-6 overflow-y-auto p-4 text-xs">
+                    <dl className="grid grid-cols-2 content-start gap-x-3 gap-y-1">
+                      <dt className="text-ink-400">Salida</dt>
+                      <dd className="truncate text-right text-ink-100" title={studio.output?.deviceName}>{studio.output?.deviceName ?? "—"}</dd>
+                      <dt className="text-ink-400">Formato</dt>
+                      <dd className="text-right font-mono text-ink-100">
+                        {studio.output?.sampleRate ? `${studio.output.sampleRate / 1000} kHz · ${studio.output.bufferSize} muestras · ${studio.output.outputChannels ?? 2} canales` : "—"}
+                      </dd>
+                      <dt className="text-ink-400">Latencia de salida</dt>
+                      <dd className="text-right font-mono text-ink-100">{studio.output?.outputLatencyMs ? `${studio.output.outputLatencyMs.toFixed(1)} ms` : "—"}</dd>
+                      <dt className="text-ink-400">Carga del audio / render</dt>
+                      <dd className="text-right font-mono text-ink-100">{transport ? `${pct(transport.audioLoad)} / ${pct(transport.renderLoad)}` : "—"}</dd>
+                      <dt className="text-ink-400">Cortes del render</dt>
+                      <dd className="text-right font-mono text-ink-100">{transport?.underruns ?? 0}</dd>
+                      <dt className="text-ink-400">Memoria de audio</dt>
+                      <dd className="text-right font-mono text-ink-100">{Math.round(loaded.memoryMB)} MB</dd>
+                    </dl>
+                    <ul className="grid content-start gap-1">
+                      {loaded.tracks.map((t) => (
+                        <li key={t.path} className="flex justify-between gap-2" title={t.path}>
+                          <span className="truncate text-ink-200">{t.name}</span>
+                          <span className="shrink-0 font-mono text-ink-400">
+                            {t.format} · {t.sourceSampleRate / 1000} kHz{t.resampled ? " → convertido" : ""} · {t.channels === 1 ? "mono" : "estéreo"}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-        </div>
+        </>
       )}
     </div>
   );

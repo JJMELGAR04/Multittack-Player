@@ -122,6 +122,61 @@ export const TRACK_ROLES: { role: TrackRole; label: string }[] = [
   { role: "other", label: "Otro" },
 ];
 
+/** Track colour by instrument family (labels, lanes, mixer strips). */
+export const ROLE_COLORS: Record<TrackRole, string> = {
+  drums: "#e8c21b",
+  percussion: "#f59e0b",
+  bass: "#e11d74",
+  electric_guitar: "#dc2626",
+  acoustic_guitar: "#a855f7",
+  piano: "#f97316",
+  keys: "#0d9488",
+  pads: "#3b82f6",
+  synth: "#ea580c",
+  strings: "#6366f1",
+  brass: "#ca8a04",
+  lead_vocal: "#d946ef",
+  backing_vocals: "#8b5cf6",
+  loops: "#65a30d",
+  backing_track: "#0891b2",
+  click: "#94a3b8",
+  cues: "#38bdf8",
+  other: "#64748b",
+};
+
+/** Text colour that stays readable on a role colour. */
+export function textOn(hex: string): string {
+  const n = parseInt(hex.slice(1), 16);
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  return 0.299 * r + 0.587 * g + 0.114 * b > 150 ? "#0a0b0d" : "#ffffff";
+}
+
+/** Linear peak -> 0..1 on a -60..+6 dB meter scale. */
+export function meterFraction(linear: number): number {
+  if (linear <= 0) return 0;
+  const db = 20 * Math.log10(linear);
+  return Math.min(1, Math.max(0, (db - MIN_DB) / (MAX_DB - MIN_DB)));
+}
+
+/** "Compás 12 · 3" position in the bar grid (1-based), or null without tempo. */
+export function barBeat(sec: number, bpm: number | null, downbeatSec: number, beats: number): { bar: number; beat: number } | null {
+  if (!bpm || bpm <= 0) return null;
+  const beatSec = 60 / bpm;
+  const totalBeats = Math.floor((sec - downbeatSec) / beatSec + 1e-6);
+  const bar = Math.floor(totalBeats / beats) + 1;
+  const beat = (((totalBeats % beats) + beats) % beats) + 1;
+  return { bar, beat };
+}
+
+/** Effective per-track gains from mixer state (solo wins over mute; dB faders). */
+export function effectiveGains(volumesDb: number[], mute: boolean[], solo: boolean[]): number[] {
+  const anySolo = solo.some(Boolean);
+  return volumesDb.map((db, i) => {
+    if (anySolo ? !solo[i] : mute[i]) return 0;
+    return dbToGain(db);
+  });
+}
+
 export function roleLabel(role: TrackRole): string {
   return TRACK_ROLES.find((r) => r.role === role)?.label ?? "Otro";
 }

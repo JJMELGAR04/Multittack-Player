@@ -259,6 +259,23 @@ lp_result lp_engine_set_output_mode (lp_engine* engine, int32_t mode)
     return guarded (engine, [&] { return engine->impl.setOutputMode (mode) ? LP_OK : LP_ERR_INVALID_STATE; });
 }
 
+lp_result lp_engine_get_meters (lp_engine* engine, float* values, size_t capacity, size_t* out_count)
+{
+    if (engine == nullptr || out_count == nullptr || (values == nullptr && capacity != 0))
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] {
+        *out_count = (size_t) engine->impl.getPlayer().getNumTracks() + 4;
+        if (values == nullptr)
+            return LP_OK;
+        if (capacity < *out_count)
+            return LP_ERR_BUFFER_TOO_SMALL;
+        std::vector<float> m;
+        engine->impl.getPlayer().takeMeters (m);
+        std::copy (m.begin(), m.end(), values);
+        return LP_OK;
+    });
+}
+
 lp_result lp_engine_set_monitor_gain (lp_engine* engine, double gain)
 {
     if (engine == nullptr || ! std::isfinite (gain) || gain < 0.0 || gain > 2.0)

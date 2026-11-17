@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use liveplayer_db::{Database, NewSongMeta, NewTrack, SectionRecord, SongRecord, SongSummary, SongTempo, beats_per_bar};
-use liveplayer_engine::{Engine, OutputInfo, OutputMode, SongStatus, TrackRequest, TransportState, engine_role};
+use liveplayer_engine::{Engine, Meters, OutputInfo, OutputMode, SongStatus, TrackRequest, TransportState, engine_role};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -340,6 +340,12 @@ pub fn transport_set_master_gain(engine: State<'_, Engine>, gain: f64) -> Comman
 #[tauri::command]
 pub fn transport_set_tempo_ratio(engine: State<'_, Engine>, ratio: f64) -> CommandResult<()> {
     Ok(engine.set_tempo_ratio(ratio)?)
+}
+
+/// Level meters (peaks since the previous call), polled by the UI ~25 times/s.
+#[tauri::command]
+pub fn studio_meters(engine: State<'_, Engine>) -> CommandResult<Meters> {
+    Ok(engine.meters()?)
 }
 
 #[tauri::command]

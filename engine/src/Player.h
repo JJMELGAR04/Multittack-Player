@@ -58,6 +58,10 @@ public:
         monitorTrimTarget.store (monitorBusTrim);
     }
     int getNumTracks() const noexcept { return numTracks; }
+
+    /** Peak levels since the previous call (linear): one per track (after its
+        gain), then main L/R and monitor L/R (after the limiters). Resets them. */
+    void takeMeters (std::vector<float>& out);
     int getOutputChannels() const noexcept { return outputChannels.load(); }
 
     struct Snapshot
@@ -150,6 +154,8 @@ private:
     std::unique_ptr<std::atomic<int>[]> trackBus;
     std::unique_ptr<std::atomic<float>[]> trackGainTarget;
     std::vector<float> trackGain; // audio thread
+    std::unique_ptr<std::atomic<float>[]> trackPeak; // audio -> control (max since last read)
+    std::atomic<float> busPeak[4] {};
 };
 
 } // namespace liveplayer

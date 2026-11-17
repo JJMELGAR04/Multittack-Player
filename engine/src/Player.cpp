@@ -126,10 +126,12 @@ void Player::setSong (SongPtr newSong)
     trackBus = std::make_unique<std::atomic<int>[]> ((size_t) n);
     trackGainTarget = std::make_unique<std::atomic<float>[]> ((size_t) n);
     trackGain.assign ((size_t) n, 1.0f);
+    trackPeak = std::make_unique<std::atomic<float>[]> ((size_t) n);
     for (int t = 0; t < n; ++t)
     {
         trackBus[(size_t) t].store (song->tracks[(size_t) t].bus);
         trackGainTarget[(size_t) t].store (1.0f);
+        trackPeak[(size_t) t].store (0.0f);
     }
     numTracks = n;
     renderer.prepare (song);
@@ -181,6 +183,21 @@ void Player::setTrackBus (int track, int bus)
 {
     if (track >= 0 && track < numTracks)
         trackBus[(size_t) track].store (bus == busMonitor ? busMonitor : busMain);
+}
+
+void Player::takeMeters (std::vector<float>& out)
+{
+    out.clear();
+    for (int t = 0; t < numTracks; ++t)
+        out.push_back (trackPeak[(size_t) t].exchange (0.0f));
+    for (auto& b : busPeak)
+        out.push_back (b.exchange (0.0f));
+}
+
+static void storeMax (std::atomic<float>& a, float v) noexcept
+{
+    float cur = a.load (std::memory_order_relaxed);
+    while (v > cur && ! a.compare_exchange_weak (cur, v, std::memory_order_relaxed)) {}
 }
 
 void Player::setTrackGain (int track, float gain)
@@ -378,6 +395,14 @@ int Player::renderSubBlock (float* const* outputs, int numOutputs, int offset, i
         const float* srcL = ring.readPointer (t * 2) + readOffset;
         const float* srcR = ring.readPointer (t * 2 + 1) + readOffset;
 
+        // Track meter: source peak x track gain (fades/master excluded, like a pre-fader-of-master meter).
+        {
+            const auto rl = juce::FloatVectorOperations::findMinAndMax (srcL, frames);
+            const auto rr = juce::FloatVectorOperations::findMinAndMax (srcR, frames);
+            const float peak = juce::jmax (std::abs (rl.getStart()), std::abs (rl.getEnd()), std::abs (rr.getStart()), std::abs (rr.getEnd()));
+            storeMax (trackPeak[(size_t) t], peak * juce::jmax (current, target) * fadeGain);
+        }
+
         if (current == target)
         {
             juce::FloatVectorOperations::addWithMultiply (dstL, srcL, current, frames);
@@ -404,6 +429,14 @@ int Player::renderSubBlock (float* const* outputs, int numOutputs, int offset, i
     // Safety limiters (-0.5 dBFS ceiling, 1 ms look-ahead, same latency on both buses).
     mainLimiter.process (mainL, mainR, frames);
     monitorLimiter.process (monL, monR, frames);
+    {
+        const float* buses[4] = { mainL, mainR, monL, monR };
+        for (int b = 0; b < 4; ++b)
+        {
+            const auto r = juce::FloatVectorOperations::findMinAndMax (buses[b], frames);
+            storeMax (busPeak[b], juce::jmax (r.getEnd(), -r.getStart()));
+        }
+    }
 
     // 3. Map the buses to the device outputs.
     auto out = [&] (int c) { return outputs[c] != nullptr ? outputs[c] + offset : nullptr; };

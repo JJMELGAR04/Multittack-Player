@@ -22,6 +22,11 @@ Criterio del usuario: *todo debe sonar profesional*, sin cortes, clics ni artefa
 - **Identificar archivos**: si un nombre no dice qué es (p. ej. «llmmD»), mostrarlo, dejar escucharlo solo y preguntar qué es; tomarlo como tal («Batería»).
 - **Dos señales de salida**: instrumentos por un lado (PA) y click + cues por otro (solo la banda). *Se adelanta una parte de la fase 4 a petición del usuario.*
 
+### Ampliación 3 — nuevo diseño (referencias del usuario en `Visualizacion/`, 2026-11-17)
+- Navegación principal en una **barra superior**.
+- Multitrack Studio con aspecto de estación de trabajo: barra de transporte con reloj digital y compás/tiempo, vista de pistas (cabecera de color por instrumento con M/S y medidor, forma de onda sobre el color de la pista, regla de tiempo + compases, carril de partes con marcadores, cursor rojo) y **mezclador abajo** (fader, medidor, M/S, etiqueta de color por pista; tiras de PA y Banda). Paneles en pestañas: Mezclador, Partes, Tempo, Salidas, Pistas, Motor.
+- Se toman las ideas de distribución de las imágenes (REAPER y una grabadora multipista en vivo) sin copiar su aspecto.
+
 ## Funcionalidades
 
 Leyenda: ✅ Implementado y probado · 🟡 Implementado, prueba parcial · ⏳ Pendiente
@@ -63,6 +68,9 @@ Leyenda: ✅ Implementado y probado · 🟡 Implementado, prueba parcial · ⏳ 
 | Volumen de click/cues separado; modo y volumen se guardan | ✅ | |
 | Cambiar después qué es una pista (su salida sigue al rol) | ✅ | Prueba de base de datos |
 | **Ajuste automático de nivel** por canción (evita saturar al sumar stems) | ✅ | *Ancient*: la suma llegaba a +6,1 dBFS (0,53 % de muestras saturadas); ahora queda a −1 dBFS |
+| **Nuevo diseño del Studio** (barra superior de navegación, vista de pistas, mezclador inferior) | ✅ | Capturas E2E `03b-studio-playing.png` |
+| **Medidores de nivel** reales por pista y por bus (pico con caída y retención) | ✅ | Prueba nativa (valores exactos) + E2E (se mueven al reproducir) |
+| Volumen, mute (M) y solo (S) por pista | ✅ | E2E: M silencia solo esa pista. *Aún no se guardan por canción: eso llega con el mezclador completo (fase 3), junto con el paneo.* |
 | **Limitador de seguridad** por bus (−0,5 dBFS, 1 ms de anticipación, sin escalones) | ✅ | Con picos de +6 dBFS: salida −0,50 dBFS exactos; por debajo del techo el audio pasa bit a bit |
 
 ## Pruebas realizadas (2026-11-17, Windows 10 Home, i5-7200U 2 núcleos / 4 hilos, 24 GB)
@@ -70,13 +78,13 @@ Leyenda: ✅ Implementado y probado · 🟡 Implementado, prueba parcial · ⏳ 
 | Suite | Comando | Resultado |
 |---|---|---|
 | Typecheck | `npm run typecheck` | ✅ 0 errores |
-| UI (Vitest) | `npm test` | ✅ 24/24 |
+| UI (Vitest) | `npm test` | ✅ 26/26 |
 | Motor C++: ABI pública | `ctest` → `engine_c_api` | ✅ |
 | Motor C++: audio, sincronía, rendimiento y análisis | `ctest` → `engine_audio` | ✅ todas (resultados en la tabla de arriba) |
 | Rust `liveplayer-engine` | `cargo test -p liveplayer-engine` | ✅ 2/2, incluida una reproducción real en silencio por la tarjeta de sonido |
 | Rust `liveplayer-db` | `cargo test -p liveplayer-db` | ✅ 10/10 |
 | Rust `liveplayer-desktop` | `cargo test -p liveplayer-desktop` | ✅ 4/4 (zip, reconocimiento de pistas, título/BPM) |
-| E2E sobre la app real | `npm run test:e2e -w apps/desktop` | ✅ **38/38** (silenciosa; usa una carpeta de datos aislada, no toca tu biblioteca) |
+| E2E sobre la app real | `npm run test:e2e -w apps/desktop` | ✅ **40/40** (silenciosa; usa una carpeta de datos aislada, no toca tu biblioteca) |
 
 ### Errores encontrados y corregidos durante la fase
 - (ampliación 2) Umbral de secciones inflado por silencios → mediana/MAD. Suma de stems saturando → ajuste de nivel + limitador. `envPrefix` de Vite con «*» nunca coincidía. Prueba E2E desactualizada (ABI v3).

@@ -539,6 +539,17 @@ static void testOutputRouting()
     CHECK (std::abs (last (0) - 0.5f) < 1e-5f && std::abs (last (1) - 0.5f) < 1e-5f);
     CHECK (std::abs (last (2) - 0.25f) < 1e-5f && std::abs (last (3) - 0.25f) < 1e-5f);
 
+    // Meters: Keys at 0.5 on main, Click at 0.25 on monitor.
+    {
+        std::vector<float> m;
+        player.takeMeters (m);
+        std::printf ("  meters: keys %.3f click %.3f | main %.3f/%.3f monitor %.3f/%.3f\n", m[0], m[1], m[2], m[3], m[4], m[5]);
+        CHECK (m.size() == 6 && std::abs (m[0] - 0.5f) < 1e-4f && std::abs (m[1] - 0.25f) < 1e-4f);
+        CHECK (std::abs (m[2] - 0.5f) < 1e-3f && std::abs (m[4] - 0.25f) < 1e-3f);
+        player.takeMeters (m);
+        CHECK (m[0] == 0.0f); // reset after reading (no audio rendered in between)
+    }
+
     // Monitor volume only affects the click bus.
     player.setMonitorGain (0.5f);
     run (0.2);

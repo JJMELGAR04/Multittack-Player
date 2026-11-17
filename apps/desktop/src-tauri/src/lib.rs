@@ -60,6 +60,7 @@ pub fn run() {
             commands::studio::transport_set_master_gain,
             commands::studio::transport_set_tempo_ratio,
             commands::studio::transport_state,
+            commands::studio::studio_meters,
             commands::studio::studio_output_settings,
             commands::studio::studio_set_output,
             commands::studio::studio_set_track_gain,

@@ -200,6 +200,17 @@ pub struct SongStatus {
     pub analysis: Option<SongAnalysis>,
 }
 
+/// Peak levels (linear) since the previous read.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Meters {
+    pub tracks: Vec<f32>,
+    /// Instruments bus L/R (after the limiter).
+    pub main: [f32; 2],
+    /// Click + cues bus L/R (after the limiter).
+    pub monitor: [f32; 2],
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum PlayState {
@@ -415,6 +426,21 @@ impl Engine {
         self.map(unsafe { ffi::lp_engine_set_output_mode(self.raw.as_ptr(), mode.code()) })
     }
 
+    /// Peak meters since the previous call (resets them).
+    pub fn meters(&self) -> Result<Meters, EngineError> {
+        self.check_thread()?;
+        let engine = self.raw.as_ptr();
+        let mut count = 0usize;
+        // SAFETY: size query.
+        self.map(unsafe { ffi::lp_engine_get_meters(engine, std::ptr::null_mut(), 0, &mut count) })?;
+        let mut v = vec![0f32; count];
+        // SAFETY: `v` has `count` writable floats.
+        self.map(unsafe { ffi::lp_engine_get_meters(engine, v.as_mut_ptr(), v.len(), &mut count) })?;
+        let n = v.len().saturating_sub(4);
+        let bus = |i: usize| v.get(n + i).copied().unwrap_or(0.0);
+        Ok(Meters { tracks: v[..n].to_vec(), main: [bus(0), bus(1)], monitor: [bus(2), bus(3)] })
+    }
+
     /// Volume of the click / cues bus, linear 0..2.
     pub fn set_monitor_gain(&self, gain: f64) -> Result<(), EngineError> {
         self.check_thread()?;
@@ -622,6 +648,7 @@ mod tests {
             assert!(matches!(engine.set_output_mode(OutputMode::Quad), Err(EngineError::InvalidState(_))));
         }
         engine.set_output_mode(OutputMode::Stereo).unwrap();
+        assert_eq!(engine.meters().unwrap().tracks.len(), 2);
 
         // Silent playback check (master at 0): the transport must advance.
         engine.set_master_gain(0.0).unwrap();
