@@ -44,6 +44,48 @@ body {
   overflow: hidden;
 }
 
+/* Console-style vertical fader (native range input in vertical writing mode). */
+.lp-fader {
+  appearance: none;
+  background: transparent;
+}
+.lp-fader::-webkit-slider-runnable-track {
+  width: 6px;
+  border-radius: 3px;
+  background: #050607;
+  box-shadow: inset 0 0 0 1px #2a2f36;
+}
+.lp-fader::-webkit-slider-thumb {
+  appearance: none;
+  width: 26px;
+  height: 14px;
+  margin-left: -10px;
+  border-radius: 3px;
+  border: 1px solid #0a0b0d;
+  background: linear-gradient(to bottom, #e3e6ea 0%, #9aa1ab 42%, #22262b 46%, #22262b 54%, #9aa1ab 58%, #cfd3d9 100%);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.6);
+}
+.lp-fader:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid var(--color-info-400);
+}
+
+/* Slim dark scrollbars (track lists, mixer). */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: #0a0b0d;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a2f36;
+  border-radius: 5px;
+  border: 2px solid #0a0b0d;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3a414b;
+}
+
 :focus-visible {
   outline: 2px solid var(--color-info-400);
   outline-offset: 2px;

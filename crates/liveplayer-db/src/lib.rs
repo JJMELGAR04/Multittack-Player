@@ -6,14 +6,27 @@
 //!   `PRAGMA user_version`. Each migration runs in a transaction.
 //! - The database is owned by the Rust backend; the UI never touches it.
 
+mod songs;
+
 use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
 
+pub use songs::{
+    NewSongMeta, NewTrack, SECTION_KINDS, SectionRecord, SongRecord, SongSummary, SongTempo, TIME_SIGNATURES, TRACK_ROLES,
+    TrackOrder, TrackRecord, beats_per_bar, bus_for_role, default_display_order,
+};
+
 /// Ordered list of migrations. Index + 1 == resulting schema version.
 /// Never edit a migration that has shipped; append a new one instead.
-const MIGRATIONS: &[&str] = &[include_str!("../migrations/0001_foundation.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("../migrations/0001_foundation.sql"),
+    include_str!("../migrations/0002_songs.sql"),
+    include_str!("../migrations/0003_roles_meter.sql"),
+    include_str!("../migrations/0004_track_order.sql"),
+    include_str!("../migrations/0005_mixer_order.sql"),
+];
 
 pub const LATEST_SCHEMA_VERSION: u32 = MIGRATIONS.len() as u32;
 
@@ -25,6 +38,10 @@ pub enum DbError {
     CreateDir { path: PathBuf, source: std::io::Error },
     #[error("la base de datos tiene el esquema v{found}, más nuevo que el soportado (v{supported})")]
     SchemaTooNew { found: u32, supported: u32 },
+    #[error("datos no válidos: {0}")]
+    Invalid(String),
+    #[error("no existe: {0}")]
+    NotFound(String),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -37,7 +54,7 @@ pub struct DatabaseStatus {
 }
 
 pub struct Database {
-    conn: Connection,
+    pub(crate) conn: Connection,
     path: PathBuf,
 }
 
@@ -134,7 +151,7 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         let status = db.status().unwrap();
         assert_eq!(status.schema_version, LATEST_SCHEMA_VERSION);
-        assert_eq!(status.tables, vec!["app_settings".to_string()]);
+        assert_eq!(status.tables, vec!["app_settings", "song_sections", "song_tracks", "songs"]);
     }
 
     #[test]

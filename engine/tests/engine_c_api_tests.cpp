@@ -3,6 +3,7 @@
 
 #include "liveplayer_engine.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -55,6 +56,42 @@ static void testDeviceDescription (lp_engine* e)
     CHECK (lp_engine_describe_audio_devices (e, nullptr, 0, nullptr) == LP_ERR_INVALID_ARGUMENT);
 }
 
+static void testTransportWithoutSong (lp_engine* e)
+{
+    // No song loaded: transport calls are rejected cleanly, never crash.
+    CHECK (lp_engine_play (e) == LP_ERR_INVALID_STATE);
+    CHECK (lp_engine_seek (e, 1.0) == LP_ERR_INVALID_STATE);
+    CHECK (lp_engine_stop (e) == LP_ERR_INVALID_STATE);
+    CHECK (lp_engine_detect_sections (e, 120.0, 0.0, 4) == LP_ERR_INVALID_STATE);
+    CHECK (lp_engine_detect_sections (e, 120.0, 0.0, 0) == LP_ERR_INVALID_ARGUMENT);
+    CHECK (lp_engine_set_track_route (e, 0, LP_BUS_MONITOR, LP_ROLE_CLICK) == LP_ERR_INVALID_STATE);
+    CHECK (lp_engine_set_track_route (e, 0, 5, LP_ROLE_CLICK) == LP_ERR_INVALID_ARGUMENT);
+    CHECK (lp_engine_set_track_gain (e, 0, 1.0) == LP_ERR_INVALID_STATE);
+    CHECK (lp_engine_set_output_mode (e, 7) == LP_ERR_INVALID_ARGUMENT);
+    CHECK (lp_engine_set_monitor_gain (e, 0.5) == LP_OK);
+    size_t required = 0;
+    CHECK (lp_engine_get_peaks (e, -1, nullptr, 0, &required) == LP_ERR_INVALID_STATE);
+
+    // Argument validation.
+    CHECK (lp_engine_set_tempo_ratio (e, 0.1) == LP_ERR_INVALID_ARGUMENT);
+    CHECK (lp_engine_set_tempo_ratio (e, 3.0) == LP_ERR_INVALID_ARGUMENT);
+    CHECK (lp_engine_set_master_gain (e, -1.0) == LP_ERR_INVALID_ARGUMENT);
+    CHECK (lp_engine_seek (e, std::nan ("")) == LP_ERR_INVALID_ARGUMENT);
+    CHECK (lp_engine_load_song (e, nullptr) == LP_ERR_INVALID_ARGUMENT);
+    CHECK (lp_engine_load_song (e, "{\"tracks\":[]}") == LP_ERR_INVALID_ARGUMENT);
+    CHECK (lp_engine_load_song (e, "not json") == LP_ERR_INVALID_ARGUMENT);
+    CHECK (lp_engine_load_song (e, "{\"tracks\":[{\"path\":\"x.wav\"}],\"beatsPerBar\":40}") == LP_ERR_INVALID_ARGUMENT);
+
+    lp_transport_state s {};
+    CHECK (lp_engine_get_transport (e, &s) == LP_OK);
+    CHECK (s.play_state == LP_STOPPED && s.duration_sec == 0.0 && s.underruns == 0);
+    CHECK (lp_engine_get_transport (e, nullptr) == LP_ERR_INVALID_ARGUMENT);
+
+    std::vector<char> buf (4096);
+    CHECK (lp_engine_get_song_status (e, buf.data(), buf.size(), &required) == LP_OK);
+    CHECK (std::string (buf.data()).find ("\"state\":\"idle\"") != std::string::npos);
+}
+
 int main()
 {
     testStaticInfo();
@@ -70,6 +107,8 @@ int main()
         if (cycle == 0)
             testDeviceDescription (e);
         CHECK (std::strcmp (lp_engine_last_error (e), "") == 0);
+        if (cycle == 1)
+            testTransportWithoutSong (e);
         lp_engine_destroy (e);
     }
     lp_engine_destroy (nullptr); // must be a no-op

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions for the main window. App commands are allowed by default; no filesystem/shell plugins are exposed.",
+  "description": "Permissions for the main window. App commands are allowed by default. Only the native open-file dialog is exposed (no filesystem/shell plugins): the UI receives the paths the user picked, the backend validates them.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "dialog:allow-open"]
 }

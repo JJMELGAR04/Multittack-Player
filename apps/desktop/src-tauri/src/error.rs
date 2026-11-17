@@ -16,13 +16,22 @@ impl From<liveplayer_engine::EngineError> for CommandError {
 
 impl From<liveplayer_db::DbError> for CommandError {
     fn from(e: liveplayer_db::DbError) -> Self {
-        Self { code: "database", message: e.to_string() }
+        let code = match e {
+            liveplayer_db::DbError::Invalid(_) => "invalid",
+            liveplayer_db::DbError::NotFound(_) => "not_found",
+            _ => "database",
+        };
+        Self { code, message: e.to_string() }
     }
 }
 
 impl CommandError {
     pub fn state(message: impl Into<String>) -> Self {
         Self { code: "state", message: message.into() }
+    }
+
+    pub fn invalid(message: impl Into<String>) -> Self {
+        Self { code: "invalid", message: message.into() }
     }
 }
 
