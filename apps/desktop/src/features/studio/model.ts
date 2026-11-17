@@ -1,4 +1,4 @@
-import type { DetectedSection, SectionKind, SectionRecord } from "@/lib/ipc/types";
+import type { Bus, DetectedSection, SectionKind, SectionRecord, TimeSignature, TrackRole } from "@/lib/ipc/types";
 
 /** "1:05.3" (m:ss.d). */
 export function formatTime(sec: number, decimals = 1): string {
@@ -99,6 +99,73 @@ export function tapTempo(taps: number[]): number | null {
   return roundBpm(60000 / avg);
 }
 
+// ---- Tracks and outputs ------------------------------------------------------
+
+export const TRACK_ROLES: { role: TrackRole; label: string }[] = [
+  { role: "drums", label: "Batería" },
+  { role: "percussion", label: "Percusión" },
+  { role: "bass", label: "Bajo" },
+  { role: "electric_guitar", label: "Guitarra eléctrica" },
+  { role: "acoustic_guitar", label: "Guitarra acústica" },
+  { role: "piano", label: "Piano" },
+  { role: "keys", label: "Teclados" },
+  { role: "pads", label: "Pads" },
+  { role: "synth", label: "Sintetizador" },
+  { role: "strings", label: "Cuerdas" },
+  { role: "brass", label: "Vientos" },
+  { role: "lead_vocal", label: "Voz principal" },
+  { role: "backing_vocals", label: "Coros" },
+  { role: "loops", label: "Loops / efectos" },
+  { role: "backing_track", label: "Backtrack / pista" },
+  { role: "click", label: "Click" },
+  { role: "cues", label: "Cues / guía" },
+  { role: "other", label: "Otro" },
+];
+
+export function roleLabel(role: TrackRole): string {
+  return TRACK_ROLES.find((r) => r.role === role)?.label ?? "Otro";
+}
+
+/** Click and cues are heard only by the band (monitor bus). */
+export function busForRole(role: TrackRole): Bus {
+  return role === "click" || role === "cues" ? "monitor" : "main";
+}
+
+export const BUS_LABEL: Record<Bus, string> = {
+  main: "PA · instrumentos",
+  monitor: "Solo banda · in-ears",
+};
+
+export const TIME_SIGNATURES: { value: TimeSignature; label: string }[] = [
+  { value: "4/4", label: "4/4" },
+  { value: "3/4", label: "3/4" },
+  { value: "6/8", label: "6/8 (BPM en negra con puntillo)" },
+  { value: "2/4", label: "2/4" },
+  { value: "12/8", label: "12/8 (BPM en negra con puntillo)" },
+  { value: "5/4", label: "5/4" },
+];
+
+/** Same rule as the backend: 6/8 and 12/8 count dotted quarters. */
+export function beatsPerBar(ts: TimeSignature): number {
+  switch (ts) {
+    case "2/4":
+    case "6/8":
+      return 2;
+    case "3/4":
+      return 3;
+    case "5/4":
+      return 5;
+    default:
+      return 4;
+  }
+}
+
+/** Default name for a track the user just identified ("Batería", "Batería 2"...). */
+export function uniqueName(base: string, taken: string[]): string {
+  if (!taken.includes(base)) return base;
+  for (let n = 2; ; n++) if (!taken.includes(`${base} ${n}`)) return `${base} ${n}`;
+}
+
 // ---- Sections ----------------------------------------------------------------
 
 export const SECTION_KINDS: { kind: SectionKind; label: string }[] = [
@@ -167,10 +234,10 @@ export function renumber(sections: SectionRecord[]): SectionRecord[] {
   });
 }
 
-/** Snaps a time to the nearest bar line of the grid (4/4), if a tempo is known. */
-export function snapToBar(sec: number, bpm: number | null, downbeatSec: number): number {
+/** Snaps a time to the nearest bar line of the grid, if a tempo is known. */
+export function snapToBar(sec: number, bpm: number | null, downbeatSec: number, beats = 4): number {
   if (!bpm || bpm <= 0) return Math.max(0, sec);
-  const bar = (4 * 60) / bpm;
+  const bar = (beats * 60) / bpm;
   const n = Math.round((sec - downbeatSec) / bar);
   return Math.max(0, downbeatSec + n * bar);
 }

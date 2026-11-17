@@ -1,15 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { backend, isNativeAvailable } from "@/lib/ipc/client";
 import type {
+  ImportCommit,
+  ImportDraft,
+  ImportTrack,
   OutputInfo,
+  OutputSettings,
   SectionRecord,
   SongRecord,
   SongSummary,
   SongTempo,
   StudioStatus,
+  TimeSignature,
+  TrackRole,
   TransportState,
 } from "@/lib/ipc/types";
-import { clampRatio, fromDetected, renumber, roundBpm } from "./model";
+import { beatsPerBar, clampRatio, fromDetected, renumber, roundBpm } from "./model";
 
 export interface Peaks {
   loadId: number;
@@ -46,6 +52,21 @@ export interface Studio {
   saveSections: (sections: SectionRecord[]) => void;
   redetectSections: () => void;
   clearError: () => void;
+
+  // Import (zip / folder / files) with a review step.
+  importDraft: ImportDraft | null;
+  /** Index of the track being auditioned alone, or null. */
+  soloTrack: number | null;
+  startImport: (paths: string[]) => Promise<void>;
+  previewSolo: (index: number | null) => void;
+  commitImport: (commit: ImportCommit) => Promise<void>;
+  cancelImport: () => void;
+
+  // Tracks and outputs.
+  outputSettings: OutputSettings | null;
+  setOutput: (settings: OutputSettings) => void;
+  updateTrack: (position: number, name: string, role: TrackRole) => void;
+  setSongInfo: (title: string, timeSignature: TimeSignature) => void;
 }
 
 function message(e: unknown): string {
@@ -63,11 +84,14 @@ export function useStudio(): Studio {
   const [song, setSong] = useState<SongRecord | null>(null);
   const [transport, setTransport] = useState<TransportState | null>(null);
   const [transportAt, setTransportAt] = useState(0);
-  const [output, setOutput] = useState<OutputInfo | null>(null);
+  const [output, setOutputInfo] = useState<OutputInfo | null>(null);
   const [peaks, setPeaks] = useState<Peaks | null>(null);
   const [recent, setRecent] = useState<SongSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [redetecting, setRedetecting] = useState(false);
+  const [importDraft, setImportDraft] = useState<ImportDraft | null>(null);
+  const [soloTrack, setSoloTrack] = useState<number | null>(null);
+  const [outputSettings, setOutputSettings] = useState<OutputSettings | null>(null);
 
   const songRef = useRef<SongRecord | null>(null);
   songRef.current = song;
@@ -101,6 +125,7 @@ export function useStudio(): Studio {
     if (!native) return;
     refreshRecent();
     backend.studioStatus().then(setStatus, fail);
+    backend.studioOutputSettings().then(setOutputSettings, () => {});
     backend.transportState().then((t) => {
       setTransport(t);
       setTransportAt(performance.now());
@@ -135,21 +160,24 @@ export function useStudio(): Studio {
     };
   }, [native]);
 
-  // A song finished loading: fetch its record, waveforms and apply its tempo.
+  // A song (or an import preview) finished loading: waveforms, record, tempo.
   useEffect(() => {
     const eng = status?.engine;
-    if (!eng || eng.state !== "ready" || !eng.song || status.songId == null) return;
+    if (!eng || eng.state !== "ready" || !eng.song) return;
     if (handledLoad.current === eng.loadId) return;
     handledLoad.current = eng.loadId;
     handledRevision.current = -1;
     const loadId = eng.loadId;
     const trackCount = eng.song.tracks.length;
+    const songId = status.songId;
 
     (async () => {
-      const record = await backend.studioGetSong(status.songId!);
-      setSong(record);
-      if (record) await backend.setTempoRatio(ratioOf(record));
-      backend.outputInfo().then(setOutput, () => {});
+      if (songId != null) {
+        const record = await backend.studioGetSong(songId);
+        setSong(record);
+        if (record) await backend.setTempoRatio(ratioOf(record));
+      }
+      backend.outputInfo().then(setOutputInfo, () => {});
       const mix = await backend.studioPeaks(-1);
       const tracks: Uint8Array[] = [];
       for (let i = 0; i < trackCount; i++) tracks.push(await backend.studioPeaks(i));
@@ -161,13 +189,25 @@ export function useStudio(): Studio {
   useEffect(() => {
     const analysis = status?.engine.analysis;
     const current = songRef.current;
-    if (!analysis || analysis.state !== "done" || !current) return;
-    if (handledLoad.current !== status?.engine.loadId || handledRevision.current === analysis.revision) return;
+    if (!analysis || analysis.state !== "done" || !current || status?.songId !== current.id) return;
+    if (handledLoad.current !== status?.engine.loadId || analysis.revision <= handledRevision.current) return;
     handledRevision.current = analysis.revision;
 
     (async () => {
       let next = current;
-      if (current.bpmSource === "none" && analysis.tempo) {
+      if (current.bpmSource === "user" && analysis.tempo?.source === "user" && analysis.tempo.bpm === current.originalBpm) {
+        // Tempo given by the user: keep it, store the bar grid found for it.
+        if (Math.abs(analysis.tempo.downbeatOffsetSec - current.downbeatOffsetSec) > 1e-3) {
+          const tempo: SongTempo = {
+            originalBpm: current.originalBpm,
+            bpmSource: "user",
+            downbeatOffsetSec: analysis.tempo.downbeatOffsetSec,
+            targetBpm: current.targetBpm,
+          };
+          await backend.studioSaveTempo(current.id, tempo);
+          next = { ...next, ...tempo };
+        }
+      } else if (current.bpmSource === "none" && analysis.tempo) {
         const tempo: SongTempo = {
           originalBpm: roundBpm(analysis.tempo.bpm),
           bpmSource: "detected",
@@ -193,6 +233,8 @@ export function useStudio(): Studio {
       setSong(record);
       setPeaks(null);
       setError(null);
+      setImportDraft(null);
+      setSoloTrack(null);
       refreshRecent();
       backend.studioStatus().then(setStatus, fail);
     },
@@ -289,12 +331,128 @@ export function useStudio(): Studio {
     if (!current) return;
     redetectRef.current = true;
     setRedetecting(true);
+    // Known tempo: re-estimate the bar grid too (-1), with the song's meter.
     run(
       backend
-        .studioDetectSections(current.originalBpm ?? 0, current.downbeatOffsetSec)
+        .studioDetectSections(current.originalBpm ?? 0, -1, beatsPerBar(current.timeSignature))
         .then(() => backend.studioStatus().then(setStatus)),
     );
   }, [run]);
+
+  // ---- Import ------------------------------------------------------------
+
+  const startImport = useCallback(
+    async (paths: string[]) => {
+      try {
+        setError(null);
+        const draft = await backend.importInspect(paths);
+        if (draft.existingSongId != null) {
+          afterOpen(await backend.studioOpenSong(draft.existingSongId));
+          return;
+        }
+        setSong(null);
+        setPeaks(null);
+        setSoloTrack(null);
+        setImportDraft(draft);
+        const tracks: ImportTrack[] = draft.files.map((f) => ({ filePath: f.filePath, name: f.suggestedName, role: f.suggestedRole }));
+        await backend.importPreview(tracks);
+        backend.studioStatus().then(setStatus, fail);
+      } catch (e) {
+        fail(e);
+      }
+    },
+    [afterOpen, fail],
+  );
+
+  const previewSolo = useCallback(
+    (index: number | null) => {
+      const count = status?.engine.song?.tracks.length ?? 0;
+      const next = index === soloTrack ? null : index;
+      setSoloTrack(next);
+      run(
+        (async () => {
+          for (let i = 0; i < count; i++) await backend.studioSetTrackGain(i, next == null || i === next ? 1 : 0);
+          if (next == null) {
+            await backend.pause();
+          } else if (transport?.playState !== "playing") {
+            // Start where the arrangement is usually full (a quarter in).
+            const dur = status?.engine.song?.durationSec ?? 0;
+            if ((transport?.positionSec ?? 0) < 1) await backend.seek(Math.min(45, dur * 0.25));
+            await backend.play();
+          }
+        })(),
+      );
+    },
+    [run, status, soloTrack, transport],
+  );
+
+  const commitImport = useCallback(
+    async (commit: ImportCommit) => {
+      try {
+        // Wait for the analysis that runs with the confirmed roles / tempo / meter.
+        const revision = status?.engine.analysis?.revision ?? -1;
+        await backend.pause();
+        const record = await backend.importCommit(commit);
+        handledRevision.current = revision;
+        setSong(record);
+        setImportDraft(null);
+        setSoloTrack(null);
+        refreshRecent();
+        backend.studioStatus().then(setStatus, fail);
+      } catch (e) {
+        fail(e);
+      }
+    },
+    [status, refreshRecent, fail],
+  );
+
+  const cancelImport = useCallback(() => {
+    const draft = importDraft;
+    setImportDraft(null);
+    setSoloTrack(null);
+    run(backend.importCancel(draft?.extractedDir ?? null));
+  }, [importDraft, run]);
+
+  // ---- Tracks and outputs ------------------------------------------------
+
+  const setOutput = useCallback(
+    (settings: OutputSettings) => {
+      const previous = outputSettings;
+      setOutputSettings(settings);
+      backend.studioSetOutput(settings).catch((e) => {
+        setOutputSettings(previous);
+        fail(e);
+      });
+    },
+    [outputSettings, fail],
+  );
+
+  const updateTrack = useCallback(
+    (position: number, name: string, role: TrackRole) => {
+      const current = songRef.current;
+      if (!current) return;
+      setSong({
+        ...current,
+        tracks: current.tracks.map((t) =>
+          t.position === position ? { ...t, name, role, bus: role === "click" || role === "cues" ? "monitor" : "main" } : t,
+        ),
+      });
+      later(`track-${current.id}-${position}`, () =>
+        backend.studioUpdateTrack(current.id, position, name, role).then(() => backend.studioStatus().then(setStatus)),
+      );
+    },
+    [later],
+  );
+
+  const setSongInfo = useCallback(
+    (title: string, timeSignature: TimeSignature) => {
+      const current = songRef.current;
+      if (!current) return;
+      setSong({ ...current, title, timeSignature });
+      later(`info-${current.id}`, () => backend.studioSetSongInfo(current.id, title, timeSignature));
+    },
+    [later],
+  );
 
   return {
     native,
@@ -322,5 +480,15 @@ export function useStudio(): Studio {
     saveSections,
     redetectSections,
     clearError: () => setError(null),
+    importDraft,
+    soloTrack,
+    startImport,
+    previewSolo,
+    commitImport,
+    cancelImport,
+    outputSettings,
+    setOutput,
+    updateTrack,
+    setSongInfo,
   };
 }

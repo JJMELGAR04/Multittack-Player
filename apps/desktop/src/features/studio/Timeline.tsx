@@ -16,6 +16,7 @@ interface TimelineProps {
   trackNames: string[];
   sections: TimedSection[];
   bpm: number | null;
+  beatsPerBar: number;
   downbeatSec: number;
   transport: TransportState | null;
   transportAt: number;
@@ -58,7 +59,7 @@ function drawWave(
 }
 
 export function Timeline(props: TimelineProps) {
-  const { durationSec, peaks, trackNames, sections, bpm, downbeatSec, transport, transportAt } = props;
+  const { durationSec, peaks, trackNames, sections, bpm, beatsPerBar, downbeatSec, transport, transportAt } = props;
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const playheadRef = useRef<HTMLDivElement>(null);
@@ -90,7 +91,8 @@ export function Timeline(props: TimelineProps) {
     const dpr = window.devicePixelRatio || 1;
     canvas.width = Math.round(width * dpr);
     canvas.height = Math.round(totalH * dpr);
-    const ctx = canvas.getContext("2d")!;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, totalH);
 
@@ -107,7 +109,7 @@ export function Timeline(props: TimelineProps) {
     // Bar grid (subtle), only when bars are wide enough to be useful.
     const top = RULER_H + SECTIONS_H;
     if (bpm && bpm > 0) {
-      const bar = 240 / bpm;
+      const bar = (beatsPerBar * 60) / bpm;
       if ((bar / durationSec) * waveW > 6) {
         ctx.fillStyle = "rgba(255,255,255,0.05)";
         for (let t = downbeatSec; t < durationSec; t += bar) ctx.fillRect(xOf(t), top, 1, totalH - top);
@@ -141,7 +143,7 @@ export function Timeline(props: TimelineProps) {
     ctx.fillText("MEZCLA", 10, top + MIX_H / 2 + 4);
     ctx.fillText("SECCIONES", 10, RULER_H + SECTIONS_H / 2 + 4);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [width, totalH, durationSec, peaks, trackNames, sections, bpm, downbeatSec]);
+  }, [width, totalH, durationSec, peaks, trackNames, sections, bpm, beatsPerBar, downbeatSec]);
 
   // Playhead animation (no React re-render per frame).
   useEffect(() => {
@@ -172,7 +174,7 @@ export function Timeline(props: TimelineProps) {
   const moveDrag = (e: ReactPointerEvent) => {
     if (!drag) return;
     const raw = secOf(e.clientX);
-    const sec = e.altKey ? raw : snapToBar(raw, bpm, downbeatSec);
+    const sec = e.altKey ? raw : snapToBar(raw, bpm, downbeatSec, beatsPerBar);
     const min = (sections[drag.index - 1]?.startSec ?? -0.5) + 0.5;
     const max = (sections[drag.index + 1]?.startSec ?? durationSec) - 0.5;
     setDrag({ ...drag, sec: Math.min(max, Math.max(min, sec)) });

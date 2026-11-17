@@ -19,7 +19,8 @@ export default defineConfig({
     hmr: host ? { protocol: "ws", host, port: 1421 } : undefined,
     watch: { ignored: ["**/src-tauri/**"] },
   },
-  envPrefix: ["VITE_", "TAURI_ENV_*"],
+  // Plain prefixes: Vite matches them literally (a "*" would never match).
+  envPrefix: ["VITE_", "TAURI_ENV_"],
   build: {
     target: "es2022",
     minify: !process.env.TAURI_ENV_DEBUG,

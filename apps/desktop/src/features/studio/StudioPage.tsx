@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, AudioLines, FolderOpen, ListMusic, Music, X } from "lucide-react";
+import { Activity, AudioLines, FolderOpen, ListMusic, Music, SlidersHorizontal, Tags, X } from "lucide-react";
 import { Panel } from "@/components/ui/Panel";
-import type { SectionRecord } from "@/lib/ipc/types";
-import { kindLabel, sectionAt, snapToBar, withEnds } from "./model";
+import type { SectionRecord, TimeSignature } from "@/lib/ipc/types";
+import { ImportDialog } from "./ImportDialog";
+import { beatsPerBar, kindLabel, sectionAt, snapToBar, TIME_SIGNATURES, withEnds } from "./model";
+import { OutputPanel, TracksPanel } from "./OutputPanel";
 import { SectionsPanel } from "./SectionsPanel";
 import { TempoControl } from "./TempoControl";
 import { Timeline } from "./Timeline";
@@ -10,13 +12,18 @@ import { TransportBar } from "./TransportBar";
 import { useStudio, type Studio } from "./useStudio";
 
 const AUDIO_EXTENSIONS = ["wav", "wave", "mp3", "aif", "aiff", "flac", "ogg"];
+const IMPORT_EXTENSIONS = ["zip", ...AUDIO_EXTENSIONS];
 
 async function pickFiles(): Promise<string[] | null> {
   const { open } = await import("@tauri-apps/plugin-dialog");
   const picked = await open({
     multiple: true,
-    title: "Selecciona las pistas de la canción (o una carpeta)",
-    filters: [{ name: "Audio", extensions: AUDIO_EXTENSIONS }],
+    title: "Selecciona el zip de la canción o sus pistas",
+    filters: [
+      { name: "Canción (zip o audio)", extensions: IMPORT_EXTENSIONS },
+      { name: "Zip", extensions: ["zip"] },
+      { name: "Audio", extensions: AUDIO_EXTENSIONS },
+    ],
   });
   if (!picked) return null;
   return Array.isArray(picked) ? picked : [picked];
@@ -81,7 +88,8 @@ export function StudioPage() {
   const studio = useStudio();
   const { song, status, transport, peaks } = studio;
   const engine = status?.engine;
-  const loaded = engine?.state === "ready" && engine.song && status?.songId === song?.id ? engine.song : null;
+  const loaded = engine?.state === "ready" && engine.song && song && status?.songId === song.id ? engine.song : null;
+  const previewReady = engine?.state === "ready" && !!engine.song && status?.songId == null;
   const analysing = engine?.analysis?.state === "running";
   const [editing, setEditing] = useState(false);
 
@@ -90,15 +98,24 @@ export function StudioPage() {
   const sectionStarts = useMemo(() => sections.map((s) => s.startSec), [sections]);
   const current = sectionAt(sections, transport?.positionSec ?? 0);
   const bpm = song?.originalBpm ?? null;
-  const barSec = bpm ? 240 / bpm : null;
+  const beats = song ? beatsPerBar(song.timeSignature) : 4;
+  const barSec = bpm ? (beats * 60) / bpm : null;
 
   useShortcuts(studio, sectionStarts);
-  const hovering = useFileDrop(studio.openFiles, studio.native);
+
+  // Debug builds only: lets the E2E test open the import dialog as if a file
+  // had been dropped (the native picker / drag & drop cannot be scripted).
+  useEffect(() => {
+    const env = (import.meta as unknown as { env: Record<string, string | undefined> }).env;
+    if (!env.TAURI_ENV_DEBUG) return;
+    (window as unknown as { __LIVEPLAYER_TEST__?: unknown }).__LIVEPLAYER_TEST__ = { startImport: studio.startImport };
+  }, [studio.startImport]);
+  const hovering = useFileDrop(studio.startImport, studio.native && !studio.importDraft);
 
   const open = async () => {
     try {
       const paths = await pickFiles();
-      if (paths) await studio.openFiles(paths);
+      if (paths) await studio.startImport(paths);
     } catch (e) {
       console.error(e);
     }
@@ -115,7 +132,7 @@ export function StudioPage() {
   };
 
   const addAtCursor = () => {
-    const at = snapToBar(transport?.positionSec ?? 0, bpm, song?.downbeatOffsetSec ?? 0);
+    const at = snapToBar(transport?.positionSec ?? 0, bpm, song?.downbeatOffsetSec ?? 0, beats);
     if (sections.some((s) => Math.abs(s.startSec - at) < 0.5)) return;
     const base: SectionRecord[] = sections.map(({ startSec, kind, label, source }) => ({ startSec, kind, label, source }));
     studio.saveSections([...base, { startSec: at, kind: "section", label: kindLabel("section"), source: "user" }]);
@@ -128,9 +145,26 @@ export function StudioPage() {
         <div className="min-w-0 flex-1">
           <h1 className="text-2xl font-bold">Multitrack Studio</h1>
           <p className="truncate text-sm text-ink-300">
-            {song ? song.title : "Abre las pistas de una canción para empezar."}
+            {song ? song.title : "Abre el zip o las pistas de una canción para empezar."}
           </p>
         </div>
+        {song && (
+          <label className="flex items-center gap-2 text-xs text-ink-300">
+            Compás
+            <select
+              aria-label="Compás de la canción"
+              value={song.timeSignature}
+              onChange={(e) => studio.setSongInfo(song.title, e.target.value as TimeSignature)}
+              className="rounded-md border border-ink-700 bg-ink-900 px-2 py-1.5 text-sm text-ink-100"
+            >
+              {TIME_SIGNATURES.map((t) => (
+                <option key={t.value} value={t.value}>
+                  {t.value}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         {studio.recent.length > 0 && (
           <label className="flex items-center gap-2 text-xs text-ink-300">
             <ListMusic size={16} />
@@ -180,7 +214,7 @@ export function StudioPage() {
         </div>
       )}
 
-      {engine?.state === "loading" && (
+      {engine?.state === "loading" && !studio.importDraft && (
         <Panel title="Cargando canción" icon={<Music size={18} />} tone="pending" statusLabel={`${Math.round(engine.progress * 100)} %`}>
           <div className="h-2 overflow-hidden rounded bg-ink-800">
             <div className="h-full bg-info-500 transition-[width]" style={{ width: `${engine.progress * 100}%` }} />
@@ -197,7 +231,20 @@ export function StudioPage() {
         </p>
       )}
 
-      {!song && engine?.state !== "loading" && (
+      {studio.importDraft && (
+        <ImportDialog
+          draft={studio.importDraft}
+          peaks={previewReady && peaks?.loadId === engine?.loadId ? peaks.tracks : null}
+          previewReady={previewReady}
+          previewProgress={engine?.state === "loading" ? engine.progress : previewReady ? 1 : 0}
+          soloTrack={studio.soloTrack}
+          onSolo={studio.previewSolo}
+          onCommit={studio.commitImport}
+          onCancel={studio.cancelImport}
+        />
+      )}
+
+      {!song && !studio.importDraft && engine?.state !== "loading" && (
         <button
           type="button"
           onClick={open}
@@ -205,8 +252,8 @@ export function StudioPage() {
           className="flex w-full flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-ink-700 py-20 text-ink-300 hover:border-info-500 hover:text-info-400"
         >
           <FolderOpen size={40} />
-          <span className="text-lg font-semibold">Arrastra aquí la carpeta de la canción o haz clic para elegir las pistas</span>
-          <span className="text-sm text-ink-400">WAV, MP3, AIFF, FLAC u OGG · todas las pistas suenan sincronizadas</span>
+          <span className="text-lg font-semibold">Arrastra aquí el zip o la carpeta de la canción, o haz clic para elegir</span>
+          <span className="text-sm text-ink-400">ZIP, WAV, MP3, AIFF, FLAC u OGG · te preguntaré título, BPM, compás y qué es cada pista</span>
         </button>
       )}
 
@@ -239,9 +286,10 @@ export function StudioPage() {
             <Timeline
               durationSec={durationSec}
               peaks={peaks?.loadId === engine?.loadId ? peaks : null}
-              trackNames={loaded.tracks.map((t) => t.name)}
+              trackNames={loaded.tracks.map((t, i) => song.tracks.find((r) => r.position === i)?.name ?? t.name)}
               sections={sections}
               bpm={bpm}
+              beatsPerBar={beats}
               downbeatSec={song.downbeatOffsetSec}
               transport={transport}
               transportAt={studio.transportAt}
@@ -310,6 +358,18 @@ export function StudioPage() {
                   </li>
                 ))}
               </ul>
+            </Panel>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Panel title="Salidas" icon={<SlidersHorizontal size={18} />}>
+              <OutputPanel settings={studio.outputSettings} transport={transport} song={loaded} onChange={studio.setOutput} />
+            </Panel>
+            <Panel title="Pistas" icon={<Tags size={18} />}>
+              <TracksPanel song={song} onUpdate={studio.updateTrack} />
+              <p className="mt-3 text-xs text-ink-400">
+                Cambia qué es cada archivo si se reconoció mal: el click y las cues salen solo hacia la banda.
+              </p>
             </Panel>
           </div>
         </div>

@@ -12,6 +12,16 @@ use tauri::Manager;
 
 const DB_FILE_NAME: &str = "liveplayer.sqlite3";
 
+/// Where the database and the imported songs live. `LIVEPLAYER_DATA_DIR`
+/// overrides it (used by the automated tests so they never touch the user's
+/// library).
+pub(crate) fn data_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, tauri::Error> {
+    match std::env::var_os("LIVEPLAYER_DATA_DIR") {
+        Some(dir) if !dir.is_empty() => Ok(std::path::PathBuf::from(dir)),
+        _ => app.path().app_data_dir(),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -20,7 +30,7 @@ pub fn run() {
             let engine = Engine::new()?;
             app.manage(engine);
 
-            let data_dir = app.path().app_data_dir()?;
+            let data_dir = data_dir(app.handle())?;
             let db = Database::open(data_dir.join(DB_FILE_NAME))?;
             app.manage(Mutex::new(db));
             app.manage(commands::studio::CurrentSong::default());
@@ -50,6 +60,15 @@ pub fn run() {
             commands::studio::transport_set_master_gain,
             commands::studio::transport_set_tempo_ratio,
             commands::studio::transport_state,
+            commands::studio::studio_output_settings,
+            commands::studio::studio_set_output,
+            commands::studio::studio_set_track_gain,
+            commands::studio::studio_update_track,
+            commands::studio::studio_set_song_info,
+            commands::import::studio_import_inspect,
+            commands::import::studio_import_preview,
+            commands::import::studio_import_commit,
+            commands::import::studio_import_cancel,
         ])
         .run(tauri::generate_context!())
         .expect("error while running LIVEPLAYER");

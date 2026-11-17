@@ -10,4 +10,5 @@
 pub mod app;
 pub mod database;
 pub mod engine;
+pub mod import;
 pub mod studio;

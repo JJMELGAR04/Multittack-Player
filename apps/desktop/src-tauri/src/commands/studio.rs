@@ -4,9 +4,9 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Mutex;
 
-use liveplayer_db::{NewTrack, SectionRecord, SongRecord, SongSummary, SongTempo};
-use liveplayer_engine::{Engine, OutputInfo, SongStatus, TrackRequest, TransportState};
-use serde::Serialize;
+use liveplayer_db::{Database, NewSongMeta, NewTrack, SectionRecord, SongRecord, SongSummary, SongTempo, beats_per_bar};
+use liveplayer_engine::{Engine, OutputInfo, OutputMode, SongStatus, TrackRequest, TransportState, engine_role};
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::commands::database::DbState;
@@ -16,10 +16,10 @@ use crate::error::{CommandError, CommandResult};
 #[derive(Default)]
 pub struct CurrentSong(pub Mutex<Option<i64>>);
 
-const AUDIO_EXTENSIONS: &[&str] = &["wav", "wave", "mp3", "aif", "aiff", "flac", "ogg"];
+pub(crate) const AUDIO_EXTENSIONS: &[&str] = &["wav", "wave", "mp3", "aif", "aiff", "flac", "ogg"];
 const MAX_TRACKS: usize = 64;
 
-fn lock<T>(m: &Mutex<T>) -> CommandResult<std::sync::MutexGuard<'_, T>> {
+pub(crate) fn lock<T>(m: &Mutex<T>) -> CommandResult<std::sync::MutexGuard<'_, T>> {
     m.lock().map_err(|_| CommandError::state("estado bloqueado por un error previo"))
 }
 
@@ -53,7 +53,7 @@ fn expand_folders(paths: &[String]) -> CommandResult<Vec<String>> {
     Ok(out)
 }
 
-fn validate_files(paths: &[String]) -> CommandResult<Vec<String>> {
+pub(crate) fn validate_files(paths: &[String]) -> CommandResult<Vec<String>> {
     let paths = expand_folders(paths)?;
     if paths.is_empty() {
         return Err(CommandError::invalid("selecciona al menos un archivo de audio"));
@@ -98,16 +98,115 @@ fn title_for(paths: &[String]) -> String {
     }
 }
 
-fn load_into_engine(engine: &Engine, song: &SongRecord) -> CommandResult<()> {
+pub(crate) fn load_into_engine(engine: &Engine, song: &SongRecord) -> CommandResult<()> {
     let missing: Vec<&str> =
         song.tracks.iter().filter(|t| !Path::new(&t.file_path).is_file()).map(|t| t.file_path.as_str()).collect();
     if !missing.is_empty() {
         return Err(CommandError::invalid(format!("faltan archivos de esta canción: {}", missing.join(", "))));
     }
-    let tracks: Vec<TrackRequest> =
-        song.tracks.iter().map(|t| TrackRequest { path: t.file_path.clone(), name: t.name.clone() }).collect();
-    engine.load_song(&tracks)?;
+    let tracks: Vec<TrackRequest> = song
+        .tracks
+        .iter()
+        .map(|t| TrackRequest {
+            path: t.file_path.clone(),
+            name: t.name.clone(),
+            role: Some(engine_role(&t.role).to_string()),
+            bus: Some(t.bus.clone()),
+        })
+        .collect();
+    engine.load_song(&tracks, song.original_bpm, beats_per_bar(&song.time_signature))?;
     Ok(())
+}
+
+// ---- Output routing settings (persisted) -------------------------------------
+
+const OUTPUT_MODE_KEY: &str = "output.mode";
+const MONITOR_GAIN_KEY: &str = "output.monitorGain";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutputSettings {
+    pub mode: OutputMode,
+    pub monitor_gain: f64,
+}
+
+fn read_output_settings(db: &Database) -> OutputSettings {
+    let mode = db
+        .get_setting(OUTPUT_MODE_KEY)
+        .ok()
+        .flatten()
+        .and_then(|v| serde_json::from_str::<OutputMode>(&v).ok())
+        .unwrap_or(OutputMode::Stereo);
+    let monitor_gain = db
+        .get_setting(MONITOR_GAIN_KEY)
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|g| (0.0..=2.0).contains(g))
+        .unwrap_or(1.0);
+    OutputSettings { mode, monitor_gain }
+}
+
+/// Applies the saved routing (called after the device opens with a song load).
+/// A saved 4-channel mode on a 2-channel device falls back to stereo.
+pub(crate) fn apply_output_settings(engine: &Engine, db: &Database) {
+    let s = read_output_settings(db);
+    let _ = engine.set_monitor_gain(s.monitor_gain);
+    if engine.set_output_mode(s.mode).is_err() {
+        let _ = engine.set_output_mode(OutputMode::Stereo);
+    }
+}
+
+#[tauri::command]
+pub fn studio_output_settings(db: State<'_, DbState>) -> CommandResult<OutputSettings> {
+    Ok(read_output_settings(&*lock(&db)?))
+}
+
+#[tauri::command]
+pub fn studio_set_output(engine: State<'_, Engine>, db: State<'_, DbState>, settings: OutputSettings) -> CommandResult<()> {
+    if !(0.0..=2.0).contains(&settings.monitor_gain) {
+        return Err(CommandError::invalid("volumen de monitoreo fuera de rango"));
+    }
+    engine.open_default_output()?;
+    engine.set_output_mode(settings.mode)?;
+    engine.set_monitor_gain(settings.monitor_gain)?;
+    let db = lock(&db)?;
+    db.set_setting(OUTPUT_MODE_KEY, &serde_json::to_string(&settings.mode).unwrap_or_else(|_| "\"stereo\"".into()))?;
+    db.set_setting(MONITOR_GAIN_KEY, &settings.monitor_gain.to_string())?;
+    Ok(())
+}
+
+/// Audition helper: per-track gain (0 mutes, 1 normal).
+#[tauri::command]
+pub fn studio_set_track_gain(engine: State<'_, Engine>, track: i32, gain: f64) -> CommandResult<()> {
+    Ok(engine.set_track_gain(track, gain)?)
+}
+
+/// Renames a track / changes what it is; its output (PA or band) follows.
+#[tauri::command]
+pub fn studio_update_track(
+    engine: State<'_, Engine>,
+    db: State<'_, DbState>,
+    current: State<'_, CurrentSong>,
+    song_id: i64,
+    position: u32,
+    name: String,
+    role: String,
+) -> CommandResult<SongRecord> {
+    let db = lock(&db)?;
+    db.update_track(song_id, position, &name, &role)?;
+    let song = db.get_song(song_id)?.ok_or_else(|| CommandError::invalid("la canción no existe"))?;
+    if *lock(&current.0)? == Some(song_id)
+        && let Some(t) = song.tracks.iter().find(|t| t.position == position)
+    {
+        engine.set_track_route(position as i32, &t.bus, engine_role(&t.role))?;
+    }
+    Ok(song)
+}
+
+#[tauri::command]
+pub fn studio_set_song_info(db: State<'_, DbState>, song_id: i64, title: String, time_signature: String) -> CommandResult<()> {
+    Ok(lock(&db)?.set_song_info(song_id, &title, &time_signature)?)
 }
 
 #[tauri::command]
@@ -122,14 +221,22 @@ pub fn studio_open_files(
     let id = match db.find_song_by_files(&files)? {
         Some(id) => id,
         None => {
-            let tracks: Vec<NewTrack> =
-                files.iter().map(|p| NewTrack { name: file_stem(p), file_path: p.clone() }).collect();
-            db.create_song(&title_for(&files), &tracks)?
+            let tracks: Vec<NewTrack> = files
+                .iter()
+                .map(|p| NewTrack {
+                    name: file_stem(p),
+                    file_path: p.clone(),
+                    role: crate::commands::import::guess_role(&file_stem(p)).unwrap_or("other").to_string(),
+                })
+                .collect();
+            let meta = NewSongMeta { original_bpm: None, time_signature: "4/4".into(), source_archive: None };
+            db.create_song(&title_for(&files), &tracks, &meta)?
         }
     };
     db.touch_song(id)?;
     let song = db.get_song(id)?.ok_or_else(|| CommandError::state("la canción no se guardó"))?;
     load_into_engine(&engine, &song)?;
+    apply_output_settings(&engine, &db);
     *lock(&current.0)? = Some(id);
     Ok(song)
 }
@@ -144,6 +251,7 @@ pub fn studio_open_song(
     let db = lock(&db)?;
     let song = db.get_song(song_id)?.ok_or_else(|| CommandError::invalid(format!("no existe la canción {song_id}")))?;
     load_into_engine(&engine, &song)?;
+    apply_output_settings(&engine, &db);
     db.touch_song(song_id)?;
     *lock(&current.0)? = Some(song_id);
     Ok(song)
@@ -178,8 +286,13 @@ pub fn studio_peaks(engine: State<'_, Engine>, track: i32) -> CommandResult<taur
 }
 
 #[tauri::command]
-pub fn studio_detect_sections(engine: State<'_, Engine>, bpm: f64, downbeat_offset_sec: f64) -> CommandResult<()> {
-    Ok(engine.detect_sections(bpm, downbeat_offset_sec)?)
+pub fn studio_detect_sections(
+    engine: State<'_, Engine>,
+    bpm: f64,
+    downbeat_offset_sec: f64,
+    beats_per_bar: i32,
+) -> CommandResult<()> {
+    Ok(engine.detect_sections(bpm, downbeat_offset_sec, beats_per_bar)?)
 }
 
 #[tauri::command]

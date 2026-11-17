@@ -65,6 +65,7 @@ export interface OutputInfo {
   deviceName?: string;
   sampleRate?: number;
   bufferSize?: number;
+  outputChannels?: number;
   outputLatencyMs?: number;
 }
 
@@ -77,12 +78,43 @@ export interface LoadedTrack {
   durationSec: number;
   /** Converted to the device sample rate (r8brain, high quality). */
   resampled: boolean;
+  role: "music" | "click" | "guide";
+  bus: Bus;
 }
+
+/** `main` = instruments (PA), `monitor` = click and cues (band in-ears only). */
+export type Bus = "main" | "monitor";
+
+export type TrackRole =
+  | "drums"
+  | "percussion"
+  | "bass"
+  | "electric_guitar"
+  | "acoustic_guitar"
+  | "piano"
+  | "keys"
+  | "pads"
+  | "synth"
+  | "strings"
+  | "brass"
+  | "lead_vocal"
+  | "backing_vocals"
+  | "loops"
+  | "backing_track"
+  | "click"
+  | "cues"
+  | "other";
+
+export type TimeSignature = "2/4" | "3/4" | "4/4" | "5/4" | "6/8" | "12/8";
 
 export interface LoadedSong {
   sampleRate: number;
   durationSec: number;
   memoryMB: number;
+  beatsPerBar: number;
+  /** Automatic level trim (dB, <= 0) so the summed stems never clip. */
+  mainTrimDb: number;
+  monitorTrimDb: number;
   tracks: LoadedTrack[];
 }
 
@@ -139,6 +171,8 @@ export interface TrackRecord {
   position: number;
   name: string;
   filePath: string;
+  role: TrackRole;
+  bus: Bus;
 }
 
 export interface SectionRecord {
@@ -159,6 +193,8 @@ export interface SongRecord extends SongTempo {
   id: number;
   title: string;
   sectionsInitialized: boolean;
+  timeSignature: TimeSignature;
+  sourceArchive: string | null;
   lastOpenedAt: string;
   tracks: TrackRecord[];
   sections: SectionRecord[];
@@ -183,4 +219,55 @@ export interface TransportState {
   audioLoad: number;
   renderLoad: number;
   underruns: number;
+  outputMode: OutputMode;
+  outputChannels: number;
+  monitorGain: number;
+  /** Safety limiter gain per bus (1 = idle). */
+  mainLimiterGain: number;
+  monitorLimiterGain: number;
+}
+
+/** stereo: everything on 1/2 · split: instruments out 1, click+cues out 2 · quad: 1/2 + 3/4. */
+export type OutputMode = "stereo" | "split" | "quad";
+
+export interface OutputSettings {
+  mode: OutputMode;
+  monitorGain: number;
+}
+
+// ---- Import ------------------------------------------------------------------
+
+export interface ImportFile {
+  filePath: string;
+  fileName: string;
+  suggestedName: string;
+  suggestedRole: TrackRole;
+  /** false: the file name did not say what it is. */
+  recognized: boolean;
+  sizeBytes: number;
+}
+
+export interface ImportDraft {
+  sourceKind: "zip" | "folder" | "files";
+  sourcePath: string | null;
+  extractedDir: string | null;
+  suggestedTitle: string;
+  suggestedBpm: number | null;
+  suggestedTimeSignature: TimeSignature;
+  files: ImportFile[];
+  existingSongId: number | null;
+}
+
+export interface ImportTrack {
+  filePath: string;
+  name: string;
+  role: TrackRole;
+}
+
+export interface ImportCommit {
+  title: string;
+  bpm: number | null;
+  timeSignature: TimeSignature;
+  sourceArchive: string | null;
+  tracks: ImportTrack[];
 }

@@ -3,7 +3,8 @@
 // Usage: node scripts/e2e-smoke.mjs <path-to-liveplayer-desktop.exe> <screenshot-dir>
 // (Windows only: relies on WebView2.)
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -15,9 +16,12 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const testAudio = join(repoRoot, "test-audio");
 spawnSync(process.execPath, [join(repoRoot, "tools/generate-test-song.mjs"), testAudio], { stdio: "inherit" });
 const songFolder = join(testAudio, "song");
+const songZip = join(testAudio, "Prueba 96bpm.zip");
+// Isolated database + library: the test never touches the user's songs.
+const dataDir = mkdtempSync(join(tmpdir(), "liveplayer-e2e-"));
 const PORT = 9333;
 const app = spawn(exe, [], {
-  env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${PORT}` },
+  env: { ...process.env, LIVEPLAYER_DATA_DIR: dataDir, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${PORT}` },
   stdio: "inherit",
 });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -63,7 +67,7 @@ try {
   const text = await evaluate("document.body.innerText");
   check("isTauri() true (no 'fuera de la aplicación' banner)", !text.includes("fuera de la aplicación de escritorio"));
   check("engine_info: JUCE 9.0.5", text.includes("9.0.5"));
-  check("engine_info: ABI v2", text.includes("v2"));
+  check("engine_info: ABI v3", text.includes("v3"));
   check("audio_diagnostics: Windows Audio listed", text.includes("Windows Audio"));
   check("database_status: songs tables (schema 2)", text.includes("songs") && text.includes("song_sections"));
   check("app_info: windows", text.includes("windows"));
@@ -95,6 +99,7 @@ try {
   await evaluate(`location.hash = "#/studio"`);
   await waitFor(`document.querySelector("h1")?.textContent === "Multitrack Studio"`, "studio page");
   await invoke("transport_set_master_gain", { gain: 0 }); // keep the test silent
+  await invoke("studio_set_output", { settings: { mode: "stereo", monitorGain: 0 } });
 
   const t0 = Date.now();
   const opened = await invoke("studio_open_files", { paths: [songFolder] }); // a folder = its audio files
@@ -155,7 +160,53 @@ try {
   await sleep(300);
   t = await transport();
   check("stop returns to 0", t.playState === "stopped" && t.positionSec === 0);
-  check("no render underruns during the whole test", t.underruns === 0, `underruns ${t.underruns}, driver xruns ${t.deviceXruns ?? "n/a"}, render load ${Math.round(t.renderLoad * 100)} %`);
+  check("no render underruns (folder song)", t.underruns === 0, `underruns ${t.underruns}, driver xruns ${t.deviceXruns ?? "n/a"}, render load ${Math.round(t.renderLoad * 100)} %`);
+  check("click track goes to the band bus", (await invoke("studio_status")).engine.song.tracks.find((tr) => tr.name === "Click")?.bus === "monitor");
+
+  // ---- Zip import with review dialog ----
+  await invoke("studio_set_output", { settings: { mode: "stereo", monitorGain: 0 } }); // silent click bus too
+  await evaluate(`window.__LIVEPLAYER_TEST__.startImport([${JSON.stringify(songZip)}])`);
+  await waitFor(`!!document.querySelector("[role=dialog]")`, "import dialog");
+  const dialogText = await evaluate(`document.querySelector("[role=dialog]").innerText`);
+  check("zip read: 5 audio files, junk ignored", (await evaluate(`document.querySelectorAll("[data-import-row]").length`)) === 5 && !dialogText.includes("LEEME"));
+  check("title and BPM taken from the zip name", (await evaluate(`document.querySelector("[aria-label=Título]").value`)) === "Prueba" && (await evaluate(`document.querySelector("[aria-label=BPM]").value`)) === "96");
+  check("unknown file flagged for the user", dialogText.includes("1 sin identificar") && dialogText.includes("llmmD.wav"));
+  for (let i = 0; i < 80; i++) { if (await evaluate(`!document.querySelector("[aria-label='Escuchar llmmD.wav']").disabled`)) break; await sleep(250); }
+  await clickButton("Escuchar llmmD.wav");
+  await sleep(1200);
+  t = await transport();
+  check("audition one file (solo)", t.playState === "playing", `${t.positionSec.toFixed(1)} s`);
+  await shot("05-import-dialog");
+  await clickButton("Detener llmmD.wav");
+  await evaluate(`(() => { const sel = document.querySelector("[aria-label='Qué es llmmD.wav']"); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(sel, "drums"); sel.dispatchEvent(new Event("change", { bubbles: true })); })()`);
+  check("identified file takes the instrument name", (await evaluate(`document.querySelector("[aria-label='Nombre de llmmD.wav']").value`)) === "Batería");
+  await evaluate(`[...document.querySelectorAll("button")].find(b => b.textContent.trim() === "Guardar canción").click()`);
+  await waitFor(`!document.querySelector("[role=dialog]")`, "dialog closed");
+  await waitFor(`document.querySelectorAll("[data-section]").length >= 6`, "zip song sections");
+  await sleep(800);
+  const st2 = await invoke("studio_status");
+  const zipSong = await invoke("studio_get_song", { songId: st2.songId });
+  const drums = zipSong.tracks.find((tr) => tr.filePath.endsWith("llmmD.wav"));
+  check("saved: title, BPM (user), 4/4, roles", zipSong.title === "Prueba" && zipSong.originalBpm === 96 && zipSong.bpmSource === "user" && zipSong.timeSignature === "4/4" && drums?.name === "Batería" && drums?.role === "drums" && drums?.bus === "main");
+  const zipLabels = await evaluate(`[...document.querySelectorAll("[data-section]")].map(b => b.dataset.section).join(", ")`);
+  check("sections found with the given BPM", zipLabels === "Intro, Estrofa 1, Coro 1, Estrofa 2, Coro 2, Puente, Coro 3, Final", zipLabels);
+  check("all 5 tracks still at unity after audition", (await transport()).underruns === 0);
+
+  // Output routing.
+  await evaluate(`[...document.querySelectorAll("[role=radio]")].find(b => b.textContent.includes("En vivo · 2 salidas")).click()`);
+  await sleep(300);
+  t = await transport();
+  check("live split output: instruments out 1, click+cues out 2", t.outputMode === "split", `device outputs: ${t.outputChannels}`);
+  const quadDisabled = await evaluate(`[...document.querySelectorAll("[role=radio]")].find(b => b.textContent.includes("4 salidas")).disabled`);
+  check("4-output mode only offered with 4+ outputs", t.outputChannels >= 4 ? !quadDisabled : quadDisabled);
+  await shot("06-outputs");
+  await evaluate(`[...document.querySelectorAll("[role=radio]")].find(b => b.textContent.includes("Ensayo")).click()`);
+
+  // Re-importing the same zip opens the saved song directly.
+  await evaluate(`window.__LIVEPLAYER_TEST__.startImport([${JSON.stringify(songZip)}])`);
+  await sleep(1500);
+  const st3 = await invoke("studio_status");
+  check("same zip again: opens the saved song, no duplicate", st3.songId === st2.songId && !(await evaluate(`!!document.querySelector("[role=dialog]")`)));
   await invoke("transport_set_master_gain", { gain: 1 });
 
   console.log(JSON.stringify(checks, null, 2));
@@ -166,5 +217,6 @@ try {
 } finally {
   app.kill();
   await sleep(500);
+  try { rmSync(dataDir, { recursive: true, force: true }); } catch {}
   process.exit(exitCode);
 }

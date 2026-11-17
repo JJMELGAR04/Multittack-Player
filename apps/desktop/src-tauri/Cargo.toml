@@ -20,3 +20,4 @@ thiserror.workspace = true
 liveplayer-engine = { path = "../../../crates/liveplayer-engine" }
 liveplayer-db = { path = "../../../crates/liveplayer-db" }
 tauri-plugin-dialog = "2"
+zip = { version = "9.6.1", default-features = false, features = ["deflate"] }

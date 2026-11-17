@@ -6,7 +6,13 @@ import type {
   EngineInfo,
   EnginePing,
   IpcError,
+  ImportCommit,
+  ImportDraft,
+  ImportTrack,
   OutputInfo,
+  OutputSettings,
+  TrackRole,
+  TimeSignature,
   SectionRecord,
   SongRecord,
   SongSummary,
@@ -70,8 +76,21 @@ export const backend = {
   studioStatus: () => call<StudioStatus>("studio_status"),
   /** Waveform overview, LP_PEAKS_PER_SECOND (100) bytes per second, 0..255. */
   studioPeaks: async (track: number) => new Uint8Array(await call<ArrayBuffer>("studio_peaks", { track })),
-  studioDetectSections: (bpm: number, downbeatOffsetSec: number) =>
-    call<void>("studio_detect_sections", { bpm, downbeatOffsetSec }),
+  studioDetectSections: (bpm: number, downbeatOffsetSec: number, beatsPerBar: number) =>
+    call<void>("studio_detect_sections", { bpm, downbeatOffsetSec, beatsPerBar }),
+  studioUpdateTrack: (songId: number, position: number, name: string, role: TrackRole) =>
+    call<SongRecord>("studio_update_track", { songId, position, name, role }),
+  studioSetSongInfo: (songId: number, title: string, timeSignature: TimeSignature) =>
+    call<void>("studio_set_song_info", { songId, title, timeSignature }),
+  studioSetTrackGain: (track: number, gain: number) => call<void>("studio_set_track_gain", { track, gain }),
+  studioOutputSettings: () => call<OutputSettings>("studio_output_settings"),
+  studioSetOutput: (settings: OutputSettings) => call<void>("studio_set_output", { settings }),
+
+  // Import (zip / folder / files)
+  importInspect: (paths: string[]) => call<ImportDraft>("studio_import_inspect", { paths }),
+  importPreview: (tracks: ImportTrack[]) => call<void>("studio_import_preview", { tracks }),
+  importCommit: (commit: ImportCommit) => call<SongRecord>("studio_import_commit", { commit }),
+  importCancel: (extractedDir: string | null) => call<void>("studio_import_cancel", { extractedDir }),
   studioSaveSections: (songId: number, sections: SectionRecord[]) =>
     call<void>("studio_save_sections", { songId, sections }),
   studioSaveTempo: (songId: number, tempo: SongTempo) => call<void>("studio_save_tempo", { songId, tempo }),
