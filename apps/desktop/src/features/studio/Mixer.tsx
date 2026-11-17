@@ -2,7 +2,7 @@ import { GripHorizontal, Headphones, Speaker } from "lucide-react";
 import { useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import type { Bus, TrackRole } from "@/lib/ipc/types";
 import { Meter } from "./Meter";
-import { formatDb, MAX_DB, MIN_DB, ROLE_COLORS, textOn } from "./model";
+import { formatDb, MAX_DB, MIN_DB, parseDbInput, ROLE_COLORS, textOn } from "./model";
 import type { MeterStore } from "./useStudio";
 
 export interface MixerTrack {
@@ -40,6 +40,47 @@ function Fader({ value, onChange, label }: { value: number; onChange: (db: numbe
       className="lp-fader cursor-ns-resize accent-ink-100"
       style={style}
     />
+  );
+}
+
+/** dB readout; double-click to type an exact value (Enter applies, Esc cancels). */
+function DbReadout({ value, onCommit, name }: { value: number; onCommit: (db: number) => void; name: string }) {
+  const [editing, setEditing] = useState<string | null>(null);
+  const shown = formatDb(value).replace(" dB", "");
+  if (editing !== null) {
+    const commit = () => {
+      const v = parseDbInput(editing);
+      if (v !== null) onCommit(v);
+      setEditing(null);
+    };
+    return (
+      <input
+        autoFocus
+        aria-label={`Escribir volumen de ${name}`}
+        value={editing}
+        onChange={(e) => setEditing(e.target.value)}
+        onFocus={(e) => e.target.select()}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === "Enter") commit();
+          else if (e.key === "Escape") setEditing(null);
+        }}
+        inputMode="decimal"
+        className="w-14 rounded border border-info-500 bg-black px-1 text-center font-mono text-[11px] text-go-400 outline-none"
+      />
+    );
+  }
+  return (
+    <button
+      type="button"
+      aria-label={`Volumen de ${name}: ${shown} dB (doble clic para escribir)`}
+      title="Doble clic para escribir el valor exacto (−60 a +8 dB)"
+      onDoubleClick={() => setEditing(value <= MIN_DB ? "-inf" : (Math.round(value * 10) / 10).toString())}
+      className="w-14 cursor-text rounded bg-black px-1 text-center font-mono text-[11px] text-go-400 hover:ring-1 hover:ring-ink-600"
+    >
+      {shown}
+    </button>
   );
 }
 
@@ -111,7 +152,7 @@ function Strip({ name, color, db, onDb, read, badge, mute, solo, onMute, onSolo,
         {badge === "monitor" ? <Headphones size={10} /> : <Speaker size={10} />}
         {badge === "monitor" ? "Banda" : "PA"}
       </span>
-      <span className="w-14 rounded bg-black px-1 text-center font-mono text-[11px] text-go-400">{formatDb(db).replace(" dB", "")}</span>
+      <DbReadout value={db} onCommit={onDb} name={name} />
       <div className="flex items-end gap-1.5">
         <Fader value={db} onChange={onDb} label={`Volumen de ${name}`} />
         <Meter read={read} height={FADER_H} barWidth={wide ? 7 : 5} />

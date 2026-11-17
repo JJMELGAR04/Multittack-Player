@@ -177,6 +177,10 @@ export interface TrackRecord {
   displayOrder: number;
   /** Where its strip is in the mixer (0 = left); independent of displayOrder. */
   mixerOrder: number;
+  /** Saved mixer settings. */
+  volumeDb: number;
+  muted: boolean;
+  soloed: boolean;
 }
 
 export interface SectionRecord {
@@ -244,6 +248,29 @@ export type OutputMode = "stereo" | "split" | "quad";
 export interface OutputSettings {
   mode: OutputMode;
   monitorGain: number;
+  /** PA (instruments) master volume, linear. */
+  mainGain: number;
+}
+
+export interface TrackMix {
+  volumeDb: number;
+  muted: boolean;
+  soloed: boolean;
+}
+
+/** One row of the song library. */
+export interface LibrarySong {
+  id: number;
+  title: string;
+  originalBpm: number | null;
+  targetBpm: number | null;
+  timeSignature: TimeSignature;
+  durationSec: number | null;
+  trackCount: number;
+  sectionCount: number;
+  sourceArchive: string | null;
+  createdAt: string;
+  lastOpenedAt: string;
 }
 
 // ---- Import ------------------------------------------------------------------

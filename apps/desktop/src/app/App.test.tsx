@@ -41,7 +41,13 @@ describe("navigation", () => {
     expect((screen.getByRole("button", { name: /Abrir pistas/ }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it.each(MODULES.filter((m) => m.path !== "/" && m.id !== "studio"))("renders planned module $label", (m) => {
+  it("renders the song library (phase 3) without faking data outside Tauri", () => {
+    renderAt("/songs");
+    expect(screen.getByRole("heading", { level: 1, name: "Songs" })).toBeTruthy();
+    expect(screen.getByText(/la biblioteca no está disponible/)).toBeTruthy();
+  });
+
+  it.each(MODULES.filter((m) => m.path !== "/" && m.id !== "studio" && m.id !== "songs"))("renders planned module $label", (m) => {
     renderAt(m.path);
     expect(screen.getByRole("heading", { level: 1, name: m.label })).toBeTruthy();
     expect(screen.getByText(`Planificado para la Fase ${m.phase}`)).toBeTruthy();

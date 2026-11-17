@@ -55,7 +55,7 @@ export function OutputPanel({ settings, transport, song, onChange }: OutputProps
               role="radio"
               aria-checked={active}
               disabled={disabled}
-              onClick={() => onChange({ mode: m.mode, monitorGain: dbToGain(monDb) })}
+              onClick={() => onChange({ mode: m.mode, monitorGain: dbToGain(monDb), mainGain: settings?.mainGain ?? 1 })}
               className={`flex items-start gap-3 rounded-lg border px-3 py-2 text-left disabled:opacity-40 ${
                 active ? "border-info-500 bg-info-500/10" : "border-ink-800 bg-ink-900 hover:border-ink-600"
               }`}
@@ -92,7 +92,7 @@ export function OutputPanel({ settings, transport, song, onChange }: OutputProps
           onChange={(e) => {
             const v = Number(e.target.value);
             setMonDb(v);
-            onChange({ mode, monitorGain: dbToGain(v) });
+            onChange({ mode, monitorGain: dbToGain(v), mainGain: settings?.mainGain ?? 1 });
           }}
           className="flex-1 accent-info-500"
         />

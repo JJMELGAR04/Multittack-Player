@@ -12,7 +12,7 @@ export function formatTime(sec: number, decimals = 1): string {
 // ---- Volume ------------------------------------------------------------------
 
 export const MIN_DB = -60;
-export const MAX_DB = 6;
+export const MAX_DB = 8;
 
 export function dbToGain(db: number): number {
   return db <= MIN_DB ? 0 : Math.pow(10, db / 20);
@@ -20,6 +20,19 @@ export function dbToGain(db: number): number {
 
 export function gainToDb(gain: number): number {
   return gain <= 0 ? MIN_DB : Math.max(MIN_DB, Math.min(MAX_DB, 20 * Math.log10(gain)));
+}
+
+/**
+ * Reads a volume typed by the user: "-3,5", "−6.5", "+8", "0", "-inf"/"−∞"
+ * (= silence). Returns null if it is not a number; clamps to the fader range.
+ */
+export function parseDbInput(text: string): number | null {
+  const t = text.trim().toLowerCase().replace(/\s*db$/, "").replace("−", "-").replace(",", ".");
+  if (t === "-inf" || t === "-∞" || t === "inf" || t === "∞") return MIN_DB;
+  if (!/^[+-]?(\d+(\.\d*)?|\.\d+)$/.test(t)) return null;
+  const v = Number(t);
+  if (!Number.isFinite(v)) return null;
+  return Math.round(Math.min(MAX_DB, Math.max(MIN_DB, v)) * 10) / 10;
 }
 
 export function formatDb(db: number): string {

@@ -10,6 +10,8 @@ import type {
   ImportDraft,
   ImportTrack,
   Meters,
+  LibrarySong,
+  TrackMix,
   OutputInfo,
   OutputSettings,
   TrackRole,
@@ -85,6 +87,13 @@ export const backend = {
     call<void>("studio_set_song_info", { songId, title, timeSignature }),
   studioReorderTracks: (songId: number, positions: number[]) => call<void>("studio_reorder_tracks", { songId, positions }),
   studioReorderMixer: (songId: number, positions: number[]) => call<void>("studio_reorder_mixer", { songId, positions }),
+  studioSetTrackMix: (songId: number, position: number, mix: TrackMix) => call<void>("studio_set_track_mix", { songId, position, mix }),
+
+  // Song library
+  librarySongs: () => call<LibrarySong[]>("library_songs"),
+  libraryRename: (songId: number, title: string) => call<void>("library_rename", { songId, title }),
+  /** Returns how many audio files were deleted (only files inside LIVEPLAYER's library folder). */
+  libraryDelete: (songId: number) => call<number>("library_delete", { songId }),
   studioSetTrackGain: (track: number, gain: number) => call<void>("studio_set_track_gain", { track, gain }),
   studioOutputSettings: () => call<OutputSettings>("studio_output_settings"),
   studioSetOutput: (settings: OutputSettings) => call<void>("studio_set_output", { settings }),

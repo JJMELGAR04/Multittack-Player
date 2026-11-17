@@ -84,7 +84,7 @@ export interface Studio {
   /** New mixer order: track positions from left to right (tracks unchanged). */
   reorderMixer: (positions: number[]) => void;
 
-  // Mixer (volume / mute / solo per track; persisted from phase 3 on).
+  // Mixer (volume / mute / solo per track, saved with the song).
   meters: MeterStore;
   mixer: MixerState;
   setTrackVolume: (track: number, db: number) => void;
@@ -116,6 +116,18 @@ export function useStudio(): Studio {
   const [soloTrack, setSoloTrack] = useState<number | null>(null);
   const [outputSettings, setOutputSettings] = useState<OutputSettings | null>(null);
   const meters = useRef<Meters>({ tracks: [], main: [0, 0], monitor: [0, 0] });
+  /** Last gain sent to the engine per track (only changes are sent). */
+  const gainsApplied = useRef<number[]>([]);
+  const sendGains = useCallback(async (m: MixerState) => {
+    const gains = effectiveGains(m.volumesDb, m.mute, m.solo);
+    await Promise.all(
+      gains.map((g, i) => {
+        if (gainsApplied.current[i] === g) return Promise.resolve();
+        gainsApplied.current[i] = g;
+        return backend.studioSetTrackGain(i, Math.min(4, g));
+      }),
+    );
+  }, []);
   const [mixer, setMixer] = useState<MixerState>({ volumesDb: [], mute: [], solo: [] });
 
   const songRef = useRef<SongRecord | null>(null);
@@ -211,12 +223,24 @@ export function useStudio(): Studio {
     const trackCount = eng.song.tracks.length;
     const songId = status.songId;
     setMixer({ volumesDb: Array(trackCount).fill(0), mute: Array(trackCount).fill(false), solo: Array(trackCount).fill(false) });
+    gainsApplied.current = Array(trackCount).fill(1);
 
     (async () => {
       if (songId != null) {
         const record = await backend.studioGetSong(songId);
         setSong(record);
-        if (record) await backend.setTempoRatio(ratioOf(record));
+        if (record) {
+          await backend.setTempoRatio(ratioOf(record));
+          // Restore the saved mixer of this song.
+          const at = (i: number) => record.tracks.find((t) => t.position === i);
+          const saved: MixerState = {
+            volumesDb: Array.from({ length: trackCount }, (_, i) => at(i)?.volumeDb ?? 0),
+            mute: Array.from({ length: trackCount }, (_, i) => at(i)?.muted ?? false),
+            solo: Array.from({ length: trackCount }, (_, i) => at(i)?.soloed ?? false),
+          };
+          setMixer(saved);
+          await sendGains(saved);
+        }
       }
       backend.outputInfo().then(setOutputInfo, () => {});
       const mix = await backend.studioPeaks(-1);
@@ -487,11 +511,19 @@ export function useStudio(): Studio {
 
   const applyMixer = useCallback(
     (next: MixerState) => {
+      const prev = mixer;
       setMixer(next);
-      const gains = effectiveGains(next.volumesDb, next.mute, next.solo);
-      run(Promise.all(gains.map((g, i) => backend.studioSetTrackGain(i, Math.min(2, g)))));
+      run(sendGains(next));
+      // Save the tracks that changed with the song (coalesced while dragging a fader).
+      const current = songRef.current;
+      if (!current) return;
+      next.volumesDb.forEach((db, i) => {
+        if (db === prev.volumesDb[i] && next.mute[i] === prev.mute[i] && next.solo[i] === prev.solo[i]) return;
+        const mix = { volumeDb: db, muted: !!next.mute[i], soloed: !!next.solo[i] };
+        later(`mix-${current.id}-${i}`, () => backend.studioSetTrackMix(current.id, i, mix), 300);
+      });
     },
-    [run],
+    [mixer, run, later],
   );
 
   const setTrackVolume = useCallback(
