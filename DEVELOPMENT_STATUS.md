@@ -3,11 +3,11 @@
 | | |
 |---|---|
 | **Fase actual** | **FASE 2 — REPRODUCCIÓN REAL, TEMPO Y SECCIONES** |
-| **Estado** | Implementada y probada. ⏳ **Pendiente de aprobación del usuario** |
-| **Rama** | `feature/phase-2-playback` (se fusionará en `main` cuando se apruebe) |
+| **Estado** | ✅ **Aprobada por el usuario (2026-11-17)** |
+| **Rama** | `feature/phase-2-playback`, fusionada en `main` |
 | **Fecha** | 2026-11-17 |
 | **Fase anterior** | Fase 1 — Foundation: ✅ aprobada y fusionada en `main` (2026-11-16) |
-| **Próxima fase** | FASE 3 — Mezclador (**no iniciada**; requiere aprobación expresa) |
+| **Próxima fase** | FASE 3 — Mezclador y biblioteca (**no iniciada**; requiere aprobación expresa del plan) |
 
 ## Objetivo de la fase 2 (ampliado a petición del usuario)
 Reproducción multitrack real y sincronizada con calidad profesional, más:
@@ -126,5 +126,5 @@ Analizada con el motor (`liveplayer_inspect`):
 - Decodificador MP3 de JUCE (ya incluido; AGPLv3).
 - Herramienta de desarrollo: `tools/generate-test-song.mjs` (Node) genera la canción de prueba (`test-audio/`, ignorada por git).
 
-## Próximo paso propuesto (requiere aprobación)
+## Próximo paso propuesto (pendiente de aprobación del plan)
 **FASE 3 — Mezclador**: volumen, mute y solo por pista, paneo, medidores de nivel, agrupación de pistas, biblioteca de canciones.
