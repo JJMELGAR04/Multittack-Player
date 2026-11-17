@@ -52,6 +52,8 @@ PaddedInput paddedInput (const juce::AudioBuffer<float>& audio, juce::int64 star
 struct SongRenderer::Track
 {
     const TrackData* data = nullptr;
+    bool pitchFixed = false;       // click / cues
+    double appliedTranspose = 0.0; // what the stretcher is set to
     signalsmith::stretch::SignalsmithStretch<float> stretch { stretchSeed };
 
     std::vector<float> mono = std::vector<float> ((size_t) ChunkRing::chunkFrames);
@@ -110,6 +112,10 @@ void SongRenderer::prepare (SongPtr newSong)
         // higher-quality setting. CPU is not a concern here: rendering runs
         // ahead of time on its own thread.
         track->stretch.presetDefault (track->channels(), (float) song->sampleRate);
+        // Sung vocals keep their formants (natural voice instead of "chipmunk").
+        if (t.voice)
+            track->stretch.setFormantSemitones (0, true);
+        track->pitchFixed = t.role != roleMusic;
         tracks.push_back (std::move (track));
     }
 
@@ -132,6 +138,7 @@ void SongRenderer::prepare (SongPtr newSong)
     }
     mode = Mode::direct;
     rate = 1.0;
+    transpose = 0.0;
     directPos = 0;
     stretchOutPos = 0.0;
     stretchInFeed = 0;
@@ -150,13 +157,14 @@ double SongRenderer::position() const noexcept
     return mode == Mode::direct ? (double) directPos : stretchOutPos;
 }
 
-void SongRenderer::seek (double sourcePos, double targetRate)
+void SongRenderer::seek (double sourcePos, double targetRate, double transposeSemitones)
 {
+    applyTranspose (transposeSemitones);
     sourcePos = juce::jlimit (0.0, (double) song->lengthSamples, sourcePos);
     rate = targetRate; // a jump does not glide
     crossfadeDone = crossfadeFrames;
 
-    if (rate == 1.0)
+    if (! needsStretch())
     {
         mode = Mode::direct;
         directPos = std::llround (sourcePos);
@@ -180,6 +188,41 @@ void SongRenderer::startStretchAt (double sourcePos, double atRate)
 
     stretchOutPos = (double) start;
     stretchInFeed = start + seekLength;
+}
+
+void SongRenderer::setPitchFixed (size_t track, bool fixed) noexcept
+{
+    if (track < tracks.size())
+        tracks[track]->pitchFixed = fixed;
+}
+
+bool SongRenderer::needsStretch() const noexcept
+{
+    if (rate != 1.0)
+        return true;
+    if (transpose == 0.0)
+        return false;
+    for (auto& t : tracks)
+        if (! t->pitchFixed)
+            return true;
+    return false;
+}
+
+void SongRenderer::applyTranspose (double semitones)
+{
+    transpose = semitones;
+    // Above ~8 kHz the sound is treated as noise (cymbals, breath, air): it
+    // keeps its natural texture instead of being "tuned".
+    const float tonalityLimit = (float) (8000.0 / song->sampleRate);
+    for (auto& t : tracks)
+    {
+        const double wanted = t->pitchFixed ? 0.0 : semitones;
+        if (wanted != t->appliedTranspose)
+        {
+            t->stretch.setTransposeSemitones ((float) wanted, wanted != 0.0 ? tonalityLimit : 0.0f);
+            t->appliedTranspose = wanted;
+        }
+    }
 }
 
 void SongRenderer::updateRate (double targetRate)
@@ -272,22 +315,23 @@ void SongRenderer::stretchTrack (size_t i, float* const* out, int frames, int in
     }
 }
 
-void SongRenderer::render (float* const* out, double targetRate, ChunkMeta& meta)
+void SongRenderer::render (float* const* out, double targetRate, double transposeSemitones, ChunkMeta& meta)
 {
     constexpr int frames = ChunkRing::chunkFrames;
     updateRate (targetRate);
+    applyTranspose (transposeSemitones);
 
     // Mode changes start a crossfade (never while one is running).
     if (crossfadeDone >= crossfadeFrames)
     {
-        if (mode == Mode::direct && rate != 1.0)
+        if (mode == Mode::direct && needsStretch())
         {
             crossfadeFrom = Mode::direct;
             startStretchAt ((double) directPos, rate);
             mode = Mode::stretch;
             crossfadeDone = 0;
         }
-        else if (mode == Mode::stretch && rate == 1.0)
+        else if (mode == Mode::stretch && ! needsStretch())
         {
             crossfadeFrom = Mode::stretch;
             directPos = std::llround (stretchOutPos);

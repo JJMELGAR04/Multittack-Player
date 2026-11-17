@@ -10,6 +10,7 @@ namespace
 constexpr double fadeSeconds = 0.010;    // transport fades (play/pause/stop/seek)
 constexpr double lookaheadSeconds = 0.15; // how far ahead the render thread works
 constexpr int ringChunks = 128;           // capacity: lookahead + large device buffers
+constexpr double jumpCrossfadeSeconds = 0.005;
 
 float fadeShape (float x) noexcept
 {
@@ -35,6 +36,27 @@ public:
 
         uint32_t generation = player.seekGeneration.load (std::memory_order_acquire);
         bool endWritten = false;
+
+        // Seamless jumps: `active` plays, `standby` is started at the target
+        // right at the jump sample, both are crossfaded, then they swap roles.
+        SongRenderer* active = &songRenderer;
+        SongRenderer* standby = &player.altRenderer;
+        uint32_t jumpSeen = player.jumpSerial.load (std::memory_order_acquire);
+        const int xfadeLen = juce::jmax (16, (int) std::lround (jumpCrossfadeSeconds * player.songSampleRate));
+        int tail = 0, xfadeDone = 0; // crossfade frames still to do in the next chunk / already done
+        juce::AudioBuffer<float> scratch (numChannels, ChunkRing::chunkFrames);
+        ChunkMeta scratchMeta;
+        auto blend = [&] (int from, int to) {
+            // Old content (scratch) fades out with cos, new (ring) in with sin: equal power.
+            for (int k = from; k < to; ++k)
+            {
+                const float w = juce::jlimit (0.0f, 1.0f, (float) (xfadeDone + k - from) / (float) xfadeLen);
+                const float a = std::cos (w * juce::MathConstants<float>::halfPi);
+                const float b = std::sin (w * juce::MathConstants<float>::halfPi);
+                for (int c = 0; c < numChannels; ++c)
+                    pointers[(size_t) c][k] = pointers[(size_t) c][k] * b + scratch.getSample (c, k) * a;
+            }
+        };
         double busySeconds = 0.0, producedSeconds = 0.0;
         const double ticksPerSecond = (double) juce::Time::getHighResolutionTicksPerSecond();
 
@@ -44,8 +66,9 @@ public:
             if (g != generation)
             {
                 generation = g;
-                songRenderer.seek (player.seekTarget.load(), player.tempoTarget.load());
+                active->seek (player.seekTarget.load(), player.tempoTarget.load(), player.transposeTarget.load());
                 endWritten = false;
+                tail = 0;
             }
 
             if (endWritten || chunks.freeChunks() == 0 || chunks.availableChunks() >= targetChunks)
@@ -59,13 +82,91 @@ public:
                 pointers[(size_t) c] = chunks.writePointer (c);
 
             auto& meta = chunks.writeMeta();
-            songRenderer.render (pointers.data(), player.tempoTarget.load(), meta);
+            const double tempo = player.tempoTarget.load();
+            const double transpose = player.transposeTarget.load();
+            for (int t = 0; t < player.numTracks; ++t)
+            {
+                const bool fixed = player.trackPitchFixed[(size_t) t].load (std::memory_order_relaxed);
+                active->setPitchFixed ((size_t) t, fixed);
+                standby->setPitchFixed ((size_t) t, fixed);
+            }
+            const auto js = player.jumpSerial.load (std::memory_order_acquire);
+            if (js != jumpSeen)
+                jumpSeen = js;
+
+            if (tail > 0)
+            {
+                // Second half of a jump crossfade: old content still fading out.
+                standby->render (scratch.getArrayOfWritePointers(), tempo, transpose, scratchMeta);
+                active->render (pointers.data(), tempo, transpose, meta);
+                const int n = juce::jmin (tail, ChunkRing::chunkFrames);
+                blend (0, n);
+                tail = 0;
+            }
+            else
+            {
+                // Which jump is armed: a one-shot jump first, else the loop end.
+                bool armed = false, oneShot = false;
+                double at = 0.0, target = 0.0;
+                if (player.jumpActive.load())
+                {
+                    armed = oneShot = true;
+                    at = player.jumpAt.load();
+                    target = player.jumpTarget.load();
+                }
+                else
+                {
+                    const double ls = player.loopStartSamples.load(), le = player.loopEndSamples.load();
+                    if (le > ls && active->nextSourcePos() < le + 0.5) // a chunk may start right on the loop end
+                    {
+                        armed = true;
+                        at = le;
+                        target = ls;
+                    }
+                }
+
+                const double p0 = active->nextSourcePos();
+                const double p1 = p0 + ChunkRing::chunkFrames * active->effectiveRate();
+                if (armed && oneShot && at < p0 - 0.5)
+                {
+                    player.jumpActive.store (false); // too late: the render already passed it
+                    armed = false;
+                }
+
+                if (armed && at < p1)
+                {
+                    active->render (pointers.data(), tempo, transpose, meta);
+                    const int offset = juce::jlimit (0, ChunkRing::chunkFrames,
+                                                     (int) std::floor ((at - meta.sourcePos) / meta.rate + 0.5));
+                    standby->seek (juce::jmax (0.0, target - offset * meta.rate), tempo, transpose);
+                    // Old content (A) goes to scratch, new (B) into the ring.
+                    for (int c = 0; c < numChannels; ++c)
+                        scratch.copyFrom (c, 0, pointers[(size_t) c], ChunkRing::chunkFrames);
+                    standby->render (pointers.data(), tempo, transpose, scratchMeta);
+                    for (int c = 0; c < numChannels; ++c)
+                        for (int k = 0; k < offset; ++k)
+                            pointers[(size_t) c][k] = scratch.getSample (c, k); // before the jump: A only
+                    xfadeDone = 0;
+                    blend (offset, ChunkRing::chunkFrames);
+                    xfadeDone = ChunkRing::chunkFrames - offset;
+                    tail = juce::jmax (0, xfadeLen - xfadeDone);
+                    std::swap (active, standby);
+                    meta.end = scratchMeta.end;
+                    if (oneShot)
+                        player.jumpActive.store (false);
+                    player.jumpsDone.fetch_add (1);
+                }
+                else
+                {
+                    active->render (pointers.data(), tempo, transpose, meta);
+                }
+            }
             meta.generation = generation;
             endWritten = meta.end;
             chunks.commitWrite();
 
-            player.currentRate.store (songRenderer.currentRate());
-            player.stretching.store (songRenderer.isStretching());
+            player.currentRate.store (active->currentRate());
+            player.stretching.store (active->isStretching());
 
             // Load = render time / audio time produced (fraction of one core).
             busySeconds += (double) (juce::Time::getHighResolutionTicks() - start) / ticksPerSecond;
@@ -102,6 +203,10 @@ void Player::setSong (SongPtr newSong)
     }
 
     renderer.release();
+    altRenderer.release();
+    jumpActive.store (false);
+    loopStartSamples.store (0.0);
+    loopEndSamples.store (0.0);
     song = std::move (newSong);
     numTracks = 0;
     songLength = 0;
@@ -109,6 +214,7 @@ void Player::setSong (SongPtr newSong)
     ended.store (false);
     positionSamples.store (0.0);
     tempoTarget.store (1.0);
+    transposeTarget.store (0.0);
     currentRate.store (1.0);
     stretching.store (false);
     renderLoad.store (0.0);
@@ -127,14 +233,17 @@ void Player::setSong (SongPtr newSong)
     trackGainTarget = std::make_unique<std::atomic<float>[]> ((size_t) n);
     trackGain.assign ((size_t) n, 1.0f);
     trackPeak = std::make_unique<std::atomic<float>[]> ((size_t) n);
+    trackPitchFixed = std::make_unique<std::atomic<bool>[]> ((size_t) n);
     for (int t = 0; t < n; ++t)
     {
         trackBus[(size_t) t].store (song->tracks[(size_t) t].bus);
         trackGainTarget[(size_t) t].store (1.0f);
         trackPeak[(size_t) t].store (0.0f);
+        trackPitchFixed[(size_t) t].store (song->tracks[(size_t) t].role != roleMusic);
     }
     numTracks = n;
     renderer.prepare (song);
+    altRenderer.prepare (song);
     ring.prepare (numTracks * 2, ringChunks);
 
     seekTarget.store (0.0);
@@ -173,6 +282,7 @@ void Player::seek (double positionSec)
         return;
     const double target = juce::jlimit (0.0, (double) songLength, positionSec * songSampleRate);
     ended.store (false);
+    jumpActive.store (false);
     seekTarget.store (target);
     seekGeneration.fetch_add (1, std::memory_order_acq_rel);
     if (renderThread != nullptr)
@@ -200,6 +310,20 @@ static void storeMax (std::atomic<float>& a, float v) noexcept
     while (v > cur && ! a.compare_exchange_weak (cur, v, std::memory_order_relaxed)) {}
 }
 
+void Player::setTrackPitchFixed (int track, bool fixed)
+{
+    if (track >= 0 && track < numTracks)
+        trackPitchFixed[(size_t) track].store (fixed);
+}
+
+void Player::setTranspose (double semitones)
+{
+    transposeTarget.store (juce::jlimit (-12.0, 12.0, semitones));
+    // While not playing, re-render the lookahead in the new key right away.
+    if (request.load() != requestPlay && numTracks > 0)
+        seek (positionSamples.load() / songSampleRate);
+}
+
 void Player::setTrackGain (int track, float gain)
 {
     if (track >= 0 && track < numTracks)
@@ -215,15 +339,66 @@ void Player::setTempoRatio (double ratio)
         seek (positionSamples.load() / songSampleRate);
 }
 
+double Player::minJumpLeadSeconds() const noexcept
+{
+    // The render thread works up to ~lookahead ahead (in real time) plus a
+    // chunk; in song time that scales with the tempo.
+    return (lookaheadSeconds + 0.1) * juce::jmax (1.0, tempoTarget.load());
+}
+
+bool Player::scheduleJump (double atSec, double targetSec)
+{
+    if (numTracks == 0 || request.load() != requestPlay)
+        return false;
+    const double pos = positionSamples.load() / songSampleRate;
+    if (atSec < pos + minJumpLeadSeconds() || atSec * songSampleRate > (double) songLength)
+        return false;
+    jumpAt.store (atSec * songSampleRate);
+    jumpTarget.store (juce::jlimit (0.0, (double) songLength, targetSec * songSampleRate));
+    jumpActive.store (true);
+    jumpSerial.fetch_add (1, std::memory_order_acq_rel);
+    return true;
+}
+
+void Player::cancelJump()
+{
+    jumpActive.store (false);
+    jumpSerial.fetch_add (1, std::memory_order_acq_rel);
+}
+
+void Player::setLoop (double startSec, double endSec)
+{
+    if (endSec <= startSec || numTracks == 0)
+    {
+        loopEndSamples.store (0.0);
+        loopStartSamples.store (0.0);
+        return;
+    }
+    loopStartSamples.store (juce::jlimit (0.0, (double) songLength, startSec * songSampleRate));
+    loopEndSamples.store (juce::jlimit (0.0, (double) songLength, endSec * songSampleRate));
+}
+
 Player::Snapshot Player::snapshot() const
 {
     Snapshot s;
+    if (jumpActive.load() && songSampleRate > 0)
+    {
+        s.pendingJumpAt = jumpAt.load() / songSampleRate;
+        s.pendingJumpTarget = jumpTarget.load() / songSampleRate;
+    }
+    if (loopEndSamples.load() > loopStartSamples.load() && songSampleRate > 0)
+    {
+        s.loopStart = loopStartSamples.load() / songSampleRate;
+        s.loopEnd = loopEndSamples.load() / songSampleRate;
+    }
+    s.jumpsDone = jumpsDone.load();
     const int req = request.load();
     s.ended = ended.load();
     s.playState = s.ended ? 0 : (req == requestPlay ? 1 : (req == requestPause ? 2 : 0));
     s.durationSec = songSampleRate > 0 ? (double) songLength / songSampleRate : 0.0;
     s.positionSec = songSampleRate > 0 ? positionSamples.load() / songSampleRate : 0.0;
     s.tempoRatio = currentRate.load();
+    s.transpose = transposeTarget.load();
     s.stretching = stretching.load();
     s.masterGain = masterGainTarget.load();
     s.renderLoad = renderLoad.load();

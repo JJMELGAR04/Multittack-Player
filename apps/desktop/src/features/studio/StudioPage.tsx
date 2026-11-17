@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { Activity, ChevronDown, ChevronUp, FolderOpen, Gauge, ListMusic, SlidersHorizontal, Tags, X } from "lucide-react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Activity, ChevronDown, ChevronUp, Gauge, ListMusic, Music, SlidersHorizontal, Tags, X } from "lucide-react";
+import { SongPicker } from "@/features/songs/SongPicker";
 import type { OutputMode, SectionRecord } from "@/lib/ipc/types";
 import { Arrange } from "./Arrange";
-import { ImportDialog } from "./ImportDialog";
 import { Mixer } from "./Mixer";
 import { beatsPerBar, dbToGain, gainToDb, kindLabel, moveItem, sectionAt, snapToBar, withEnds } from "./model";
 import { OutputPanel, TracksPanel } from "./OutputPanel";
@@ -21,24 +21,6 @@ const DOCK_TABS: { id: DockTab; label: string; icon: typeof Activity }[] = [
   { id: "tracks", label: "Pistas", icon: Tags },
   { id: "engine", label: "Motor", icon: Activity },
 ];
-
-const AUDIO_EXTENSIONS = ["wav", "wave", "mp3", "aif", "aiff", "flac", "ogg"];
-const IMPORT_EXTENSIONS = ["zip", ...AUDIO_EXTENSIONS];
-
-async function pickFiles(): Promise<string[] | null> {
-  const { open } = await import("@tauri-apps/plugin-dialog");
-  const picked = await open({
-    multiple: true,
-    title: "Selecciona el zip de la canción o sus pistas",
-    filters: [
-      { name: "Canción (zip o audio)", extensions: IMPORT_EXTENSIONS },
-      { name: "Zip", extensions: ["zip"] },
-      { name: "Audio", extensions: AUDIO_EXTENSIONS },
-    ],
-  });
-  if (!picked) return null;
-  return Array.isArray(picked) ? picked : [picked];
-}
 
 /** Space / Esc / Home / 1-9 shortcuts for live use. */
 function useShortcuts(studio: Studio, sectionStarts: number[]) {
@@ -63,34 +45,6 @@ function useShortcuts(studio: Studio, sectionStarts: number[]) {
   }, [studio, sectionStarts]);
 }
 
-/** Files/folders dropped on the window open a song. */
-function useFileDrop(onPaths: (paths: string[]) => void, enabled: boolean) {
-  const [hovering, setHovering] = useState(false);
-  useEffect(() => {
-    if (!enabled) return;
-    let unlisten: (() => void) | undefined;
-    let cancelled = false;
-    import("@tauri-apps/api/webview").then(({ getCurrentWebview }) =>
-      getCurrentWebview()
-        .onDragDropEvent((event) => {
-          const p = event.payload;
-          if (p.type === "enter" || p.type === "over") setHovering(true);
-          else if (p.type === "leave") setHovering(false);
-          else if (p.type === "drop") {
-            setHovering(false);
-            if (p.paths.length > 0) onPaths(p.paths);
-          }
-        })
-        .then((fn) => (cancelled ? fn() : (unlisten = fn))),
-    );
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, [onPaths, enabled]);
-  return hovering;
-}
-
 function pct(v: number) {
   return `${Math.round(v * 100)} %`;
 }
@@ -100,7 +54,6 @@ export function StudioPage() {
   const { song, status, transport, peaks } = studio;
   const engine = status?.engine;
   const loaded = engine?.state === "ready" && engine.song && song && status?.songId === song.id ? engine.song : null;
-  const previewReady = engine?.state === "ready" && !!engine.song && status?.songId == null;
   const analysing = engine?.analysis?.state === "running";
   const [editing, setEditing] = useState(false);
   const [dock, setDock] = useState<DockTab>("mixer");
@@ -116,35 +69,20 @@ export function StudioPage() {
 
   useShortcuts(studio, sectionStarts);
 
-  // Debug builds only: lets the E2E test open the import dialog as if a file
-  // had been dropped (the native picker / drag & drop cannot be scripted).
-  useEffect(() => {
-    const env = (import.meta as unknown as { env: Record<string, string | undefined> }).env;
-    if (!env.TAURI_ENV_DEBUG) return;
-    (window as unknown as { __LIVEPLAYER_TEST__?: unknown }).__LIVEPLAYER_TEST__ = { startImport: studio.startImport };
-  }, [studio.startImport]);
-  const hovering = useFileDrop(studio.startImport, studio.native && !studio.importDraft);
-
-  // Coming from the library: /studio?song=ID opens it, /studio?import=1 opens the picker.
+  // Coming from the library: /studio?song=ID opens it (importing lives in Songs).
+  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   useEffect(() => {
+    if (params.get("import")) {
+      navigate("/songs?import=1", { replace: true });
+      return;
+    }
     const songParam = params.get("song");
-    const importParam = params.get("import");
-    if (!songParam && !importParam) return;
+    if (!songParam) return;
     setParams({}, { replace: true });
-    if (songParam && studio.native) void studio.openSong(Number(songParam));
-    else if (importParam && studio.native) void open();
+    if (studio.native) void studio.openSong(Number(songParam));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params]);
-
-  const open = async () => {
-    try {
-      const paths = await pickFiles();
-      if (paths) await studio.startImport(paths);
-    } catch (e) {
-      console.error(e);
-    }
-  };
 
   const moveSection = (index: number, startSec: number) => {
     const next: SectionRecord[] = sections.map((s, i) => ({
@@ -193,15 +131,15 @@ export function StudioPage() {
       <Toolbar
         native={studio.native}
         song={loaded ? song : null}
-        recent={studio.recent}
         transport={transport}
         output={studio.output}
         outputMode={outputMode}
         ratio={studio.ratio}
         beatsPerBar={beats}
         ready={!!loaded}
-        onOpen={open}
-        onOpenRecent={(id) => void studio.openSong(id)}
+        onPickSong={(id) => void studio.openSong(id)}
+        transpose={studio.transpose}
+        onTranspose={studio.setTranspose}
         onMeter={(ts) => song && studio.setSongInfo(song.title, ts)}
         onPlay={studio.play}
         onPause={studio.pause}
@@ -226,26 +164,7 @@ export function StudioPage() {
         </div>
       )}
 
-      {hovering && (
-        <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-info-500/10 text-xl font-semibold text-info-400 ring-4 ring-inset ring-info-500">
-          Suelta el zip, la carpeta o los archivos de la canción
-        </div>
-      )}
-
-      {studio.importDraft && (
-        <ImportDialog
-          draft={studio.importDraft}
-          peaks={previewReady && peaks?.loadId === engine?.loadId ? peaks.tracks : null}
-          previewReady={previewReady}
-          previewProgress={engine?.state === "loading" ? engine.progress : previewReady ? 1 : 0}
-          soloTrack={studio.soloTrack}
-          onSolo={studio.previewSolo}
-          onCommit={studio.commitImport}
-          onCancel={studio.cancelImport}
-        />
-      )}
-
-      {engine?.state === "loading" && !studio.importDraft && (
+      {engine?.state === "loading" && (
         <div className="m-4 rounded-xl border border-ink-800 bg-ink-900 px-5 py-4">
           <p className="mb-2 text-sm text-ink-200">Cargando canción… {Math.round(engine.progress * 100)} %</p>
           <div className="h-2 overflow-hidden rounded bg-ink-800">
@@ -260,18 +179,18 @@ export function StudioPage() {
         </p>
       )}
 
-      {!loaded && !studio.importDraft && engine?.state !== "loading" && (
-        <div className="flex flex-1 items-center justify-center p-8">
-          <button
-            type="button"
-            onClick={open}
-            disabled={!studio.native}
-            className="flex w-full max-w-3xl flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-ink-700 py-20 text-ink-300 hover:border-info-500 hover:text-info-400 disabled:opacity-50"
-          >
-            <FolderOpen size={40} />
-            <span className="text-lg font-semibold">Arrastra aquí el zip o la carpeta de la canción, o haz clic para elegir</span>
-            <span className="text-sm text-ink-400">ZIP, WAV, MP3, AIFF, FLAC u OGG · te preguntaré título, BPM, compás y qué es cada pista</span>
-          </button>
+      {!loaded && engine?.state !== "loading" && (
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 p-8 text-center text-ink-300">
+          <Music size={40} className="text-ink-400" />
+          <p className="text-lg font-semibold">Busca la canción que quieres escuchar</p>
+          <SongPicker disabled={!studio.native} onPick={(id) => void studio.openSong(id)} />
+          <p className="text-sm text-ink-400">
+            ¿Una canción nueva? Impórtala en{" "}
+            <Link to="/songs" className="text-info-400 underline">
+              Songs
+            </Link>
+            .
+          </p>
         </div>
       )}
 

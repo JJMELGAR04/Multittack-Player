@@ -90,6 +90,33 @@ export interface Studio {
   setTrackVolume: (track: number, db: number) => void;
   toggleMute: (track: number) => void;
   toggleSolo: (track: number) => void;
+  /** Live Mode: the mix differs from the one saved with the song. */
+  mixDirty: boolean;
+  /** Saves the current mix with the song. */
+  saveMix: () => Promise<void>;
+  /** Goes back to the mix saved with the song. */
+  restoreMix: () => void;
+  /** Key change being played (semitones). */
+  transpose: number;
+  setTranspose: (semitones: number) => void;
+}
+
+export interface StudioOptions {
+  /** false (Live Mode): mixer changes are for the moment only, until saveMix(). */
+  persistMix?: boolean;
+  /** false (Live Mode): key changes are not saved with the song (the setlist keeps them). */
+  persistTranspose?: boolean;
+  /** Key to use when the next song loads instead of the song's own (Live: the setlist's). */
+  transposeOverride?: { current: number | null };
+}
+
+function savedMix(record: SongRecord, trackCount: number): MixerState {
+  const at = (i: number) => record.tracks.find((t) => t.position === i);
+  return {
+    volumesDb: Array.from({ length: trackCount }, (_, i) => at(i)?.volumeDb ?? 0),
+    mute: Array.from({ length: trackCount }, (_, i) => at(i)?.muted ?? false),
+    solo: Array.from({ length: trackCount }, (_, i) => at(i)?.soloed ?? false),
+  };
 }
 
 function message(e: unknown): string {
@@ -101,7 +128,12 @@ function ratioOf(song: SongRecord | null): number {
   return clampRatio(song.targetBpm / song.originalBpm);
 }
 
-export function useStudio(): Studio {
+export function useStudio(options: StudioOptions = {}): Studio {
+  const persistMix = options.persistMix ?? true;
+  const persistTranspose = options.persistTranspose ?? true;
+  const transposeOverride = options.transposeOverride;
+  const [transpose, setTransposeState] = useState(0);
+  const [mixDirty, setMixDirty] = useState(false);
   const native = isNativeAvailable();
   const [status, setStatus] = useState<StudioStatus | null>(null);
   const [song, setSong] = useState<SongRecord | null>(null);
@@ -231,14 +263,13 @@ export function useStudio(): Studio {
         setSong(record);
         if (record) {
           await backend.setTempoRatio(ratioOf(record));
+          const key = transposeOverride?.current ?? record.transpose ?? 0;
+          setTransposeState(key);
+          await backend.setTranspose(key);
           // Restore the saved mixer of this song.
-          const at = (i: number) => record.tracks.find((t) => t.position === i);
-          const saved: MixerState = {
-            volumesDb: Array.from({ length: trackCount }, (_, i) => at(i)?.volumeDb ?? 0),
-            mute: Array.from({ length: trackCount }, (_, i) => at(i)?.muted ?? false),
-            solo: Array.from({ length: trackCount }, (_, i) => at(i)?.soloed ?? false),
-          };
+          const saved = savedMix(record, trackCount);
           setMixer(saved);
+          setMixDirty(false);
           await sendGains(saved);
         }
       }
@@ -514,6 +545,11 @@ export function useStudio(): Studio {
       const prev = mixer;
       setMixer(next);
       run(sendGains(next));
+      // Live Mode: only for this moment (the saved mix stays as prepared).
+      if (!persistMix) {
+        setMixDirty(true);
+        return;
+      }
       // Save the tracks that changed with the song (coalesced while dragging a fader).
       const current = songRef.current;
       if (!current) return;
@@ -523,8 +559,44 @@ export function useStudio(): Studio {
         later(`mix-${current.id}-${i}`, () => backend.studioSetTrackMix(current.id, i, mix), 300);
       });
     },
-    [mixer, run, later],
+    [mixer, run, later, persistMix],
   );
+
+  const saveMix = useCallback(async () => {
+    const current = songRef.current;
+    if (!current) return;
+    const tracks = current.tracks.map((t) => ({
+      ...t,
+      volumeDb: mixer.volumesDb[t.position] ?? t.volumeDb,
+      muted: mixer.mute[t.position] ?? t.muted,
+      soloed: mixer.solo[t.position] ?? t.soloed,
+    }));
+    for (const t of tracks) await backend.studioSetTrackMix(current.id, t.position, { volumeDb: t.volumeDb, muted: t.muted, soloed: t.soloed });
+    setSong({ ...current, tracks });
+    setMixDirty(false);
+  }, [mixer]);
+
+  const setTranspose = useCallback(
+    (semitones: number) => {
+      const n = Math.max(-12, Math.min(12, Math.round(semitones)));
+      setTransposeState(n);
+      run(backend.setTranspose(n));
+      const current = songRef.current;
+      if (!persistTranspose || !current) return;
+      setSong({ ...current, transpose: n });
+      later(`transpose-${current.id}`, () => backend.saveTranspose(current.id, n), 300);
+    },
+    [run, later, persistTranspose],
+  );
+
+  const restoreMix = useCallback(() => {
+    const current = songRef.current;
+    if (!current) return;
+    const saved = savedMix(current, mixer.volumesDb.length);
+    setMixer(saved);
+    setMixDirty(false);
+    run(sendGains(saved));
+  }, [mixer, run, sendGains]);
 
   const setTrackVolume = useCallback(
     (track: number, db: number) => {
@@ -616,5 +688,10 @@ export function useStudio(): Studio {
     setTrackVolume,
     toggleMute,
     toggleSolo,
+    mixDirty,
+    saveMix,
+    restoreMix,
+    transpose,
+    setTranspose,
   };
 }

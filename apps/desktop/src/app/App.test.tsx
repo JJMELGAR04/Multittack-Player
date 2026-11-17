@@ -38,7 +38,9 @@ describe("navigation", () => {
     renderAt("/studio");
     expect(screen.getByRole("heading", { level: 1, name: "Multitrack Studio" })).toBeTruthy();
     expect(screen.getByText(/no hay motor de audio disponible/)).toBeTruthy();
-    expect((screen.getByRole("button", { name: /Abrir pistas/ }) as HTMLButtonElement).disabled).toBe(true);
+    // No import here any more: a search box over the library (importing lives in Songs).
+    expect(screen.queryByRole("button", { name: /Abrir pistas/ })).toBeNull();
+    for (const box of screen.getAllByRole("textbox", { name: "Buscar canción para abrir" })) expect((box as HTMLInputElement).disabled).toBe(true);
   });
 
   it("renders the song library (phase 3) without faking data outside Tauri", () => {
@@ -53,10 +55,19 @@ describe("navigation", () => {
     expect(screen.getByText(/no hay acceso a los dispositivos de audio/)).toBeTruthy();
   });
 
-  it.each(MODULES.filter((m) => m.path !== "/" && !["studio", "songs", "audio-settings"].includes(m.id)))("renders planned module $label", (m) => {
-    renderAt(m.path);
-    expect(screen.getByRole("heading", { level: 1, name: m.label })).toBeTruthy();
-    expect(screen.getByText(`Planificado para la Fase ${m.phase}`)).toBeTruthy();
+  it.each([
+    ["/setlists", "Setlists", /los setlists no están disponibles/],
+    ["/live", "Live Mode", /Live Mode no está disponible/],
+    ["/song-editor", "Song Editor", /el editor no está disponible/],
+    ["/settings", "General Settings", /los ajustes no están disponibles/],
+  ] as const)("renders %s (phase 5) without faking data outside Tauri", (path, title, warning) => {
+    renderAt(path);
+    expect(screen.getByRole("heading", { level: 1, name: title })).toBeTruthy();
+    expect(screen.getByText(warning)).toBeTruthy();
+  });
+
+  it("every module of the navigation has a real page now", () => {
+    for (const m of MODULES) expect(m.phase).toBeLessThanOrEqual(5);
   });
 
   it("redirects unknown routes to the dashboard", () => {

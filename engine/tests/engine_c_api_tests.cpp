@@ -148,6 +148,14 @@ static void testTransportWithoutSong (lp_engine* e)
     CHECK (lp_engine_set_track_gain (e, 0, 1.0) == LP_ERR_INVALID_STATE);
     CHECK (lp_engine_set_output_mode (e, 7) == LP_ERR_INVALID_ARGUMENT);
     CHECK (lp_engine_set_monitor_gain (e, 0.5) == LP_OK);
+    CHECK (lp_engine_schedule_jump (e, 10.0, 2.0) == LP_ERR_INVALID_STATE);
+    CHECK (lp_engine_schedule_jump (e, -1.0, 2.0) == LP_ERR_INVALID_ARGUMENT);
+    CHECK (lp_engine_set_loop (e, 1.0, 2.0) == LP_ERR_INVALID_STATE);
+    CHECK (lp_engine_cancel_jump (e) == LP_OK);
+    CHECK (lp_engine_set_transpose (e, 2.0) == LP_ERR_INVALID_STATE);
+    CHECK (lp_engine_set_transpose (e, 20.0) == LP_ERR_INVALID_ARGUMENT);
+    CHECK (lp_engine_preload_song (e, "{\"tracks\":[]}") == LP_OK);
+    CHECK (lp_engine_preload_song (e, "nope") == LP_ERR_INVALID_ARGUMENT);
     size_t required = 0;
     CHECK (lp_engine_get_peaks (e, -1, nullptr, 0, &required) == LP_ERR_INVALID_STATE);
 
@@ -167,6 +175,7 @@ static void testTransportWithoutSong (lp_engine* e)
     lp_transport_state s {};
     CHECK (lp_engine_get_transport (e, &s) == LP_OK);
     CHECK (s.play_state == LP_STOPPED && s.duration_sec == 0.0 && s.underruns == 0);
+    CHECK (s.pending_jump_at < 0.0 && s.loop_end < 0.0 && s.min_jump_lead_sec > 0.2);
     CHECK (lp_engine_get_transport (e, nullptr) == LP_ERR_INVALID_ARGUMENT);
 
     std::vector<char> buf (4096);

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FileArchive, HelpCircle, Headphones, Play, Square, X } from "lucide-react";
 import type { ImportCommit, ImportDraft, TimeSignature, TrackRole } from "@/lib/ipc/types";
-import { BUS_LABEL, busForRole, roleLabel, TIME_SIGNATURES, TRACK_ROLES, uniqueName } from "./model";
+import { ALL_KEY_OPTIONS, BUS_LABEL, busForRole, roleLabel, TIME_SIGNATURES, TRACK_ROLES, uniqueName } from "./model";
 
 interface Row {
   filePath: string;
@@ -21,7 +21,7 @@ interface Props {
   previewProgress: number;
   soloTrack: number | null;
   onSolo: (index: number | null) => void;
-  onCommit: (commit: ImportCommit) => void;
+  onCommit: (commit: ImportCommit) => void | Promise<void>;
   onCancel: () => void;
 }
 
@@ -54,6 +54,9 @@ export function ImportDialog({ draft, peaks, previewReady, previewProgress, solo
   const [title, setTitle] = useState(draft.suggestedTitle);
   const [bpmText, setBpmText] = useState(draft.suggestedBpm ? String(draft.suggestedBpm) : "");
   const [meter, setMeter] = useState<TimeSignature>(draft.suggestedTimeSignature);
+  const [songKey, setSongKey] = useState("");
+  // A second click while saving must not save the song twice.
+  const [saving, setSaving] = useState(false);
   const [rows, setRows] = useState<Row[]>(() =>
     draft.files.map((f) => ({
       filePath: f.filePath,
@@ -83,17 +86,23 @@ export function ImportDialog({ draft, peaks, previewReady, previewProgress, solo
       }),
     );
 
-  const commit = () => {
-    if (!canSave) return;
+  const commit = async () => {
+    if (!canSave || saving) return;
     if (pending > 0 && !window.confirm(`Hay ${pending} pista(s) sin identificar: se guardarán como «Otro» (salen por el PA). ¿Continuar?`))
       return;
-    onCommit({
+    setSaving(true);
+    try {
+      await onCommit({
       title: title.trim(),
+      songKey: songKey || null,
       bpm,
       timeSignature: meter,
       sourceArchive: draft.sourceKind === "zip" ? draft.sourcePath : null,
       tracks: rows.map((r) => ({ filePath: r.filePath, name: r.name.trim() || r.fileName, role: r.role })),
-    });
+      });
+    } finally {
+      setSaving(false);
+    }
   };
 
   const sourceName = useMemo(() => draft.sourcePath?.split(/[\\/]/).pop() ?? `${draft.files.length} archivos`, [draft]);
@@ -115,7 +124,7 @@ export function ImportDialog({ draft, peaks, previewReady, previewProgress, solo
           </button>
         </header>
 
-        <div className="grid gap-4 border-b border-ink-800 px-6 py-4 md:grid-cols-[minmax(0,1fr)_120px_minmax(0,230px)]">
+        <div className="grid gap-4 border-b border-ink-800 px-6 py-4 md:grid-cols-[minmax(0,1fr)_110px_110px_minmax(0,230px)]">
           <label className="grid gap-1 text-xs text-ink-300">
             Título
             <input aria-label="Título" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={200} className={field} onKeyDown={(e) => e.stopPropagation()} />
@@ -131,6 +140,17 @@ export function ImportDialog({ draft, peaks, previewReady, previewProgress, solo
               onKeyDown={(e) => e.stopPropagation()}
               className={`${field} ${bpmValid ? "" : "border-stop-500"}`}
             />
+          </label>
+          <label className="grid gap-1 text-xs text-ink-300">
+            Tono original
+            <select aria-label="Tono original" value={songKey} onChange={(e) => setSongKey(e.target.value)} className={field} title="El tono en que está grabada la canción: así la app te dice a qué tono la cambias">
+              <option value="">No sé</option>
+              {ALL_KEY_OPTIONS.map((k) => (
+                <option key={k} value={k}>
+                  {k}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="grid gap-1 text-xs text-ink-300">
             Compás
@@ -236,11 +256,11 @@ export function ImportDialog({ draft, peaks, previewReady, previewProgress, solo
           </button>
           <button
             type="button"
-            onClick={commit}
-            disabled={!canSave}
+            onClick={() => void commit()}
+            disabled={!canSave || saving}
             className="rounded-lg border border-go-500 bg-go-500/20 px-5 py-2 text-sm font-semibold text-go-400 hover:bg-go-500/30 disabled:opacity-40"
           >
-            Guardar canción
+            {saving ? "Guardando…" : "Guardar canción"}
           </button>
         </footer>
       </div>

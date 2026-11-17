@@ -5,6 +5,11 @@ import type {
   DeviceCapabilities,
   DeviceChoice,
   OutputChannels,
+  BackupReport,
+  SetlistInput,
+  SetlistRecord,
+  SetlistSummary,
+  SongDetails,
   DatabaseStatus,
   EngineInfo,
   EnginePing,
@@ -125,6 +130,29 @@ export const backend = {
   setMasterGain: (gain: number) => call<void>("transport_set_master_gain", { gain }),
   setTempoRatio: (ratio: number) => call<void>("transport_set_tempo_ratio", { ratio }),
   transportState: () => call<TransportState>("transport_state"),
+  scheduleJump: (atSec: number, targetSec: number) => call<void>("transport_schedule_jump", { atSec, targetSec }),
+  cancelJump: () => call<void>("transport_cancel_jump"),
+  setLoop: (startSec: number, endSec: number) => call<void>("transport_set_loop", { startSec, endSec }),
+  setTranspose: (semitones: number) => call<void>("transport_set_transpose", { semitones }),
+  saveTranspose: (songId: number, semitones: number) => call<void>("studio_save_transpose", { songId, semitones }),
+  preloadSong: (songId: number | null) => call<void>("studio_preload_song", { songId }),
+
+  // Song Editor
+  setSongDetails: (songId: number, details: SongDetails) => call<void>("studio_set_song_details", { songId, details }),
+
+  // Setlists
+  setlists: () => call<SetlistSummary[]>("setlist_list"),
+  setlist: (id: number) => call<SetlistRecord>("setlist_get", { id }),
+  createSetlist: (input: SetlistInput) => call<number>("setlist_create", { input }),
+  saveSetlist: (id: number, input: SetlistInput) => call<void>("setlist_save", { id, input }),
+  deleteSetlist: (id: number) => call<void>("setlist_delete", { id }),
+  duplicateSetlist: (id: number) => call<number>("setlist_duplicate", { id }),
+
+  // Preferences and backup
+  uiSetting: <T>(key: "shortcuts" | "live.lastSetlist") => call<T | null>("ui_setting_get", { key }),
+  setUiSetting: (key: "shortcuts" | "live.lastSetlist", value: unknown) => call<void>("ui_setting_set", { key, value }),
+  backupExport: (path: string) => call<BackupReport>("backup_export", { path }),
+  backupImport: (path: string) => call<BackupReport>("backup_import", { path }),
   studioMeters: () => call<Meters>("studio_meters"),
 };
 

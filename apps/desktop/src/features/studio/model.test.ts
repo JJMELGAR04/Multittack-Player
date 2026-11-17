@@ -175,3 +175,27 @@ describe("sections", () => {
     expect(snapToBar(-1, 96, 0)).toBe(0);
   });
 });
+
+describe("keys", () => {
+  it("transposes key names with sensible spelling", async () => {
+    const { transposeKey, keyLabelFor, formatSemitones, ALL_KEY_OPTIONS } = await import("./model");
+    expect(transposeKey("D", 2)).toBe("E");
+    expect(transposeKey("D", -2)).toBe("C");
+    expect(transposeKey("Bb", -1)).toBe("A");
+    expect(transposeKey("Bb", 1)).toBe("B");
+    expect(transposeKey("Eb", 2)).toBe("F");
+    expect(transposeKey("G", -2)).toBe("F");
+    expect(transposeKey("C", 1)).toBe("Db");
+    expect(transposeKey("C#", 1)).toBe("D");
+    expect(transposeKey("F#m", 1)).toBe("Gm");
+    expect(transposeKey("Am", 3)).toBe("Cm");
+    expect(transposeKey("B", 1)).toBe("C");
+    expect(transposeKey("H", 1)).toBe("");
+    expect(keyLabelFor("D", 2)).toBe("D → E (+2)");
+    expect(keyLabelFor("D", 0)).toBe("D");
+    expect(keyLabelFor("", -1)).toBe("−1 semitonos");
+    expect(formatSemitones(-3)).toBe("−3");
+    expect(ALL_KEY_OPTIONS.slice(0, 3)).toEqual(["C", "C#", "Db"]);
+    expect(ALL_KEY_OPTIONS).toContain("Bbm");
+  });
+});

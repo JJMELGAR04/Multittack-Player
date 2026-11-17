@@ -2,6 +2,7 @@
 // internals. Uses the generated test songs (tools/generate-test-song.mjs).
 // Usage: liveplayer_engine_audio_tests <test-audio-dir>
 
+#include <functional>
 #include "Analysis.h"
 #include "Limiter.h"
 #include "Player.h"
@@ -78,7 +79,7 @@ struct Rendered
     std::vector<ChunkMeta> meta;
 };
 
-static Rendered renderChunks (SongRenderer& r, int numTracks, int chunks, double rate)
+static Rendered renderChunks (SongRenderer& r, int numTracks, int chunks, double rate, double transpose = 0.0)
 {
     Rendered out;
     out.left.resize ((size_t) numTracks);
@@ -86,7 +87,7 @@ static Rendered renderChunks (SongRenderer& r, int numTracks, int chunks, double
     for (int k = 0; k < chunks; ++k)
     {
         ChunkMeta m;
-        r.render (buf.getArrayOfWritePointers(), rate, m);
+        r.render (buf.getArrayOfWritePointers(), rate, transpose, m);
         out.meta.push_back (m);
         for (int t = 0; t < numTracks; ++t)
             out.left[(size_t) t].insert (out.left[(size_t) t].end(), buf.getReadPointer (t * 2), buf.getReadPointer (t * 2) + ChunkRing::chunkFrames);
@@ -249,6 +250,50 @@ static void testStretchQuality()
     CHECK (std::abs (levelStretched - levelIn) < 1.0);
 }
 
+static void testTranspose()
+{
+    std::printf ("[stretch] key change: music up 2 semitones, click untouched\n");
+    const int length = (int) (4.0 * engineRate);
+    auto sine = [&] (double hz) {
+        juce::AudioBuffer<float> b (2, length);
+        for (int c = 0; c < 2; ++c)
+            for (int n = 0; n < length; ++n)
+                b.setSample (c, n, 0.4f * (float) std::sin (juce::MathConstants<double>::twoPi * hz * n / engineRate));
+        return b;
+    };
+    auto data = std::make_shared<SongData>();
+    data->sampleRate = engineRate;
+    data->lengthSamples = length;
+    for (auto [hz, role] : { std::pair<double, int> { 440.0, roleMusic }, { 1000.0, roleClick } }) // click: never transposed
+    {
+        TrackData t;
+        t.audio = sine (hz);
+        t.role = role;
+        data->tracks.push_back (std::move (t));
+    }
+    SongPtr song = data;
+    SongRenderer r;
+    r.prepare (song);
+    r.seek (0.0, 1.0, 2.0);
+    const auto out = renderChunks (r, 2, (int) (3.0 * engineRate / ChunkRing::chunkFrames), 1.0, 2.0);
+    const size_t from = (size_t) engineRate, to = (size_t) (2.5 * engineRate);
+    const double music = dominantFrequency (out.left[0], from, to);
+    const double click = dominantFrequency (out.left[1], from, to);
+    const double levelChange = rmsDb (out.left[0], from, to) - 20.0 * std::log10 (0.4 / std::sqrt (2.0));
+    std::printf ("  music 440 Hz -> %.1f Hz (expected 493.9), click 1000 Hz -> %.1f Hz, music level change %.2f dB\n", music, click, levelChange);
+    CHECK (std::abs (music - 493.88) < 3.0);
+    CHECK (std::abs (click - 1000.0) < 3.0);
+    CHECK (std::abs (levelChange) < 1.5);
+
+    // Back to the original key at the original tempo: untouched audio again.
+    r.seek (0.0, 1.0, 0.0);
+    const auto direct = renderChunks (r, 2, 4, 1.0, 0.0);
+    bool exact = true;
+    for (int n = 0; n < 4 * ChunkRing::chunkFrames; ++n)
+        exact = exact && direct.left[0][(size_t) n] == song->tracks[0].audio.getSample (0, n);
+    CHECK (exact);
+}
+
 static void testRenderSpeed()
 {
     std::printf ("[performance] render speed with time-stretch (this machine)\n");
@@ -279,7 +324,7 @@ static void testRenderSpeed()
         for (int k = 0; k < chunks; ++k)
         {
             ChunkMeta m;
-            r.render (buf.getArrayOfWritePointers(), rate, m);
+            r.render (buf.getArrayOfWritePointers(), rate, 0.0, m);
         }
         const double secs = std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count();
         const double load = secs / 20.0;
@@ -638,6 +683,136 @@ static void testTestTone()
     player.audioDeviceStopped();
 }
 
+/** Runs a player in (roughly) real time and records output channel 0. */
+static std::vector<float> runPlayer (Player& player, double seconds, const std::function<void (double)>& atTime = {})
+{
+    std::vector<float> out;
+    juce::AudioBuffer<float> block (2, 480);
+    const int blocks = (int) std::lround (seconds * engineRate / 480);
+    for (int b = 0; b < blocks; ++b)
+    {
+        if (atTime)
+            atTime (b * 480 / engineRate);
+        player.audioDeviceIOCallbackWithContext (nullptr, 0, block.getArrayOfWritePointers(), 2, 480, {});
+        out.insert (out.end(), block.getReadPointer (0), block.getReadPointer (0) + 480);
+        juce::Thread::sleep (7);
+    }
+    return out;
+}
+
+static void testSeamlessJumps()
+{
+    std::printf ("[player] seamless jumps to a part and loops (sample-accurate, no gap)\n");
+    const int length = (int) (4.0 * engineRate);
+    // Each sample encodes its own song position: value = 0.5 * n / length.
+    juce::AudioBuffer<float> ramp (2, length);
+    for (int c = 0; c < 2; ++c)
+        for (int n = 0; n < length; ++n)
+            ramp.setSample (c, n, 0.5f * (float) n / (float) length);
+    auto song = makeSong ({ ramp });
+    FakeDevice device;
+    auto posOf = [&] (float v) { return (double) v / 0.5 * length; };
+    const int xfade = (int) std::lround (0.005 * engineRate);
+
+    {
+        Player player;
+        player.setSong (song);
+        player.audioDeviceAboutToStart (&device);
+        player.play();
+        bool scheduled = false, tooClose = true;
+        const auto out = runPlayer (player, 2.0, [&] (double t) {
+            if (! scheduled && t >= 0.2)
+            {
+                tooClose = ! player.scheduleJump (0.3, 3.0); // 0.1 s ahead: refused
+                scheduled = player.scheduleJump (1.0, 3.0);  // bar line at 1.0 s -> part at 3.0 s
+            }
+        });
+        CHECK (tooClose && scheduled);
+
+        // Find where the position stops advancing one sample at a time.
+        int k = -1;
+        for (size_t i = 1000; i + 1 < out.size(); ++i)
+            if (out[i - 1] > 0.0f && std::abs (posOf (out[i]) - posOf (out[i - 1]) - 1.0) > 2.0)
+            {
+                k = (int) i;
+                break;
+            }
+        CHECK (k > 0);
+        if (k > 0)
+        {
+            // Sample k-1 is the bar line itself (the crossfade starts there with
+            // weight 0); after the crossfade only the target is heard, in step.
+            const double jumpPos = posOf (out[(size_t) k - 1]);
+            const int later = xfade + 3;
+            const double after = posOf (out[(size_t) (k - 1 + later)]);
+            float minLevel = 1.0f;
+            for (int i = k - 50; i < k + xfade + 50; ++i)
+                minLevel = std::min (minLevel, out[(size_t) i]);
+            std::printf ("  crossfade starts at song sample %.1f (bar line %.0f); %d samples later at %.1f (expected %.0f); lowest level in the crossfade %.3f\n",
+                         jumpPos, 1.0 * engineRate, later, after, 3.0 * engineRate + later, minLevel);
+            CHECK (std::abs (jumpPos - 1.0 * engineRate) < 0.6);          // exactly at the bar line
+            CHECK (std::abs (after - (3.0 * engineRate + later)) < 0.6);  // exactly in step at the target
+            CHECK (minLevel > 0.05f);                                           // no gap, no dip to silence
+            CHECK (player.snapshot().jumpsDone == 1 && player.snapshot().pendingJumpAt < 0.0);
+        }
+        player.audioDeviceStopped();
+    }
+
+    {
+        // Loop a part [0.5, 1.0): playback keeps repeating it.
+        Player player;
+        player.setSong (song);
+        player.audioDeviceAboutToStart (&device);
+        player.setLoop (0.5, 1.0);
+        player.play();
+        const auto out = runPlayer (player, 3.0);
+        double maxPos = 0.0;
+        for (size_t i = out.size() / 2; i < out.size(); ++i)
+            maxPos = std::max (maxPos, posOf (out[i]));
+        const auto s = player.snapshot();
+        std::printf ("  loop 0.5-1.0 s: %llu repeats in 3 s, furthest position %.4f s, loop reported %.2f-%.2f\n",
+                     (unsigned long long) s.jumpsDone, maxPos / engineRate, s.loopStart, s.loopEnd);
+        // Inside the 5 ms equal-power crossfade the two ramps add up to at most
+        // sqrt(1.0^2 + 0.5^2) = 1.118 s; anything beyond would mean it played past the loop.
+        CHECK (s.jumpsDone >= 4 && maxPos < 1.13 * engineRate && std::abs (s.loopStart - 0.5) < 1e-9);
+        player.setLoop (0.0, 0.0);
+        CHECK (player.snapshot().loopEnd < 0.0);
+        player.audioDeviceStopped();
+    }
+
+    {
+        // With the tempo changed (time-stretch) the click keeps its spacing across the jump.
+        juce::AudioBuffer<float> clicks (2, length);
+        clicks.clear();
+        for (double t = 0.25; t < 4.0; t += 0.5)
+            for (int c = 0; c < 2; ++c)
+                for (int i = 0; i < 48; ++i)
+                    clicks.setSample (c, (int) (t * engineRate) + i, 0.6f * std::sin (juce::MathConstants<float>::twoPi * 2000.0f * (float) i / (float) engineRate) * (1.0f - i / 48.0f));
+        Player player;
+        player.setSong (makeSong ({ clicks }));
+        player.audioDeviceAboutToStart (&device);
+        player.setTempoRatio (0.8);
+        player.play();
+        bool scheduled = false;
+        const auto out = runPlayer (player, 3.4, [&] (double t) {
+            if (! scheduled && t >= 0.3)
+                scheduled = player.scheduleJump (1.0, 2.5);
+        });
+        std::vector<float> env (out.size());
+        for (size_t i = 0; i < out.size(); ++i)
+            env[i] = std::abs (out[i]);
+        const auto pulses = findPulses (env, 0.2f, (int) (0.3 * engineRate));
+        double worst = 0.0;
+        // From the 2nd interval on (the 1st includes the stretcher starting at 0;
+        // the 2nd spans the jump).
+        for (size_t i = 2; i < pulses.size(); ++i)
+            worst = std::max (worst, std::abs ((pulses[i] - pulses[i - 1]) / engineRate - 0.5 / 0.8));
+        std::printf ("  tempo 0.8: %zu clicks, worst spacing error across the jump %.2f ms\n", pulses.size(), worst * 1000.0);
+        CHECK (scheduled && pulses.size() >= 5 && worst < 0.0005);
+        player.audioDeviceStopped();
+    }
+}
+
 static void testLimiter()
 {
     std::printf ("[limiter] safety limiter never exceeds -0.5 dBFS and is transparent below it\n");
@@ -734,9 +909,11 @@ int main (int argc, char** argv)
     testDirectPlaybackIsBitExact();
     testStretchSyncAndTiming();
     testStretchQuality();
+    testTranspose();
     testPlayerTransport();
     testOutputRouting();
     testTestTone();
+    testSeamlessJumps();
     testLimiter();
     testRenderSpeed();
     testAnalysis();

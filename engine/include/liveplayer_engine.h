@@ -29,7 +29,7 @@
 extern "C" {
 #endif
 
-#define LP_ENGINE_ABI_VERSION 5u
+#define LP_ENGINE_ABI_VERSION 7u
 
 typedef struct lp_engine lp_engine;
 
@@ -145,7 +145,7 @@ lp_result lp_engine_get_output_info(lp_engine* engine, char* buffer, size_t capa
 /**
  * Starts loading a multitrack song in the background. `request_json` is
  *   {"tracks":[{"path":"C:\\...\\Drums.wav","name":"Drums",
- *               "role":"music|click|guide","bus":"main|monitor"}, ...],
+ *               "role":"music|click|guide","bus":"main|monitor","voice":false}, ...],
  *    "bpm":72,"beatsPerBar":4}
  * "role"/"bus" are optional (inferred from the name; click/guide -> monitor).
  * "bpm" (optional, > 0) is a tempo known by the user: the analysis then only
@@ -260,6 +260,13 @@ typedef struct lp_transport_state {
     double monitor_gain;     /* linear */
     double main_limiter_gain;    /* safety limiter gain on the instruments bus (1 = idle) */
     double monitor_limiter_gain; /* same for the click / cues bus */
+    double pending_jump_at;      /* song seconds of a scheduled jump, -1 = none */
+    double pending_jump_target;  /* where it goes, -1 = none */
+    double loop_start;           /* active loop, -1 = none */
+    double loop_end;
+    double min_jump_lead_sec;    /* how far ahead a jump must be scheduled right now */
+    uint64_t jumps_done;         /* seamless jumps / loop repeats performed */
+    double transpose;            /* pitch shift of the music tracks, semitones */
 } lp_transport_state;
 
 /** Starts or resumes playback (from 0 if the song had ended). Click-free fade in. */
@@ -278,6 +285,35 @@ lp_result lp_engine_set_master_gain(lp_engine* engine, double gain);
  * Changes glide smoothly instead of jumping.
  */
 lp_result lp_engine_set_tempo_ratio(lp_engine* engine, double ratio);
+/**
+ * Seamless musical jump: when playback reaches song second `at_sec` it goes on
+ * from `target_sec`, sample-accurate with a 5 ms crossfade (no gap: the click
+ * keeps its grid). Use it to jump to a part at the next bar line.
+ * LP_ERR_INVALID_STATE when not playing (use lp_engine_seek instead);
+ * LP_ERR_INVALID_ARGUMENT when `at_sec` is closer than min_jump_lead_sec.
+ * A new jump replaces a pending one; lp_engine_seek cancels it.
+ */
+lp_result lp_engine_schedule_jump(lp_engine* engine, double at_sec, double target_sec);
+lp_result lp_engine_cancel_jump(lp_engine* engine);
+/** Seamless loop of [start_sec, end_sec) (e.g. repeat a chorus); end <= start turns it off. */
+lp_result lp_engine_set_loop(lp_engine* engine, double start_sec, double end_sec);
+
+/**
+ * Decodes a song in the background (low priority, same JSON as
+ * lp_engine_load_song) so that loading it later is instant. Only one song is
+ * kept; it is dropped if both songs would use more than half the RAM.
+ * {"tracks":[]} forgets it. State in lp_engine_get_song_status ("preload").
+ */
+lp_result lp_engine_preload_song(lp_engine* engine, const char* request_json);
+
+/**
+ * Changes the key: pitch shift of the music tracks in semitones (-12..12,
+ * fractions allowed), tempo unchanged. Click and cues tracks are never
+ * transposed; sung vocals ("voice":true in the load request) keep their
+ * formants. 0 plays the original audio untouched (when the tempo is original).
+ */
+lp_result lp_engine_set_transpose(lp_engine* engine, double semitones);
+
 /** Snapshot of the transport. */
 lp_result lp_engine_get_transport(lp_engine* engine, lp_transport_state* out_state);
 

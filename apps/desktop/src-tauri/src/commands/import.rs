@@ -59,6 +59,9 @@ pub struct ImportTrack {
 pub struct ImportCommit {
     pub title: String,
     pub bpm: Option<f64>,
+    /// Key of the recording ("D", "F#m"...), optional.
+    #[serde(default)]
+    pub song_key: Option<String>,
     pub time_signature: String,
     pub source_archive: Option<String>,
     pub tracks: Vec<ImportTrack>,
@@ -411,6 +414,7 @@ pub fn studio_import_preview(
             name: t.name.clone(),
             role: Some(engine_role(&t.role).to_string()),
             bus: Some(bus_for_role(&t.role).to_string()),
+            voice: liveplayer_engine::is_voice_role(&t.role),
         })
         .collect();
     let _ = engine.stop();
@@ -443,6 +447,22 @@ pub fn studio_import_commit(
     }
     let bpm = commit.bpm.filter(|b| *b > 0.0);
     let mut db = lock(&db)?;
+
+    // Saving twice (a second click while the first save runs, or the same
+    // files again) never creates a second copy of the song.
+    let paths: Vec<String> = commit.tracks.iter().map(|t| t.file_path.clone()).collect();
+    let existing = match db.find_song_by_files(&paths)? {
+        Some(id) => Some(id),
+        None => match &commit.source_archive {
+            Some(zip) => db.find_song_by_archive(zip)?,
+            None => None,
+        },
+    };
+    if let Some(id) = existing {
+        let song = db.get_song(id)?.ok_or_else(|| CommandError::state("la canción no existe"))?;
+        *lock(&current.0)? = Some(id);
+        return Ok(song);
+    }
     let tracks: Vec<NewTrack> = commit
         .tracks
         .iter()
@@ -454,6 +474,18 @@ pub fn studio_import_commit(
         source_archive: commit.source_archive.clone(),
     };
     let id = db.create_song(&commit.title, &tracks, &meta)?;
+    if let Some(key) = commit.song_key.as_deref().map(str::trim).filter(|k| !k.is_empty()) {
+        db.set_song_details(
+            id,
+            &liveplayer_db::SongDetails {
+                title: commit.title.clone(),
+                artist: String::new(),
+                song_key: key.to_string(),
+                notes: String::new(),
+                time_signature: commit.time_signature.clone(),
+            },
+        )?;
+    }
     let song = db.get_song(id)?.ok_or_else(|| CommandError::state("la canción no se guardó"))?;
 
     // The preview already holds these files in RAM: apply the confirmed roles

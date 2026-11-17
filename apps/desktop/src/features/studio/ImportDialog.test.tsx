@@ -48,10 +48,15 @@ describe("import dialog", () => {
 
     fireEvent.change(screen.getByLabelText("BPM"), { target: { value: "96" } });
     fireEvent.change(screen.getByLabelText("Compás"), { target: { value: "6/8" } });
+    fireEvent.change(screen.getByLabelText("Tono original"), { target: { value: "D" } });
     fireEvent.click(screen.getByRole("button", { name: "Guardar canción" }));
+    // While saving, the button is locked (a second click cannot import it twice).
+    expect((screen.getByRole("button", { name: "Guardando…" }) as HTMLButtonElement).disabled).toBe(true);
 
+    expect(onCommit).toHaveBeenCalledTimes(1);
     expect(onCommit).toHaveBeenCalledWith({
       title: "Ancient",
+      songKey: "D",
       bpm: 96,
       timeSignature: "6/8",
       sourceArchive: "C:\\Musica\\Ancient.zip",

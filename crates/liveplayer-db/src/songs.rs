@@ -84,6 +84,9 @@ pub struct TrackMix {
 pub struct LibrarySong {
     pub id: i64,
     pub title: String,
+    pub artist: String,
+    pub song_key: String,
+    pub transpose: i32,
     pub original_bpm: Option<f64>,
     pub target_bpm: Option<f64>,
     pub time_signature: String,
@@ -135,6 +138,11 @@ pub struct SectionRecord {
 pub struct SongRecord {
     pub id: i64,
     pub title: String,
+    pub artist: String,
+    pub song_key: String,
+    pub notes: String,
+    /// Semitones the song is played in (0 = recorded key).
+    pub transpose: i32,
     pub original_bpm: Option<f64>,
     pub bpm_source: String,
     pub downbeat_offset_sec: f64,
@@ -145,6 +153,20 @@ pub struct SongRecord {
     pub last_opened_at: String,
     pub tracks: Vec<TrackRecord>,
     pub sections: Vec<SectionRecord>,
+}
+
+/// What the Song Editor saves about a song.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SongDetails {
+    pub title: String,
+    #[serde(default)]
+    pub artist: String,
+    #[serde(default)]
+    pub song_key: String,
+    #[serde(default)]
+    pub notes: String,
+    pub time_signature: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -322,7 +344,7 @@ impl Database {
                 "SELECT s.id, s.title, s.original_bpm, s.target_bpm, s.time_signature, s.duration_sec,
                         (SELECT COUNT(*) FROM song_tracks t WHERE t.song_id = s.id),
                         (SELECT COUNT(*) FROM song_sections x WHERE x.song_id = s.id),
-                        s.source_archive, s.created_at, s.last_opened_at
+                        s.source_archive, s.created_at, s.last_opened_at, s.artist, s.song_key, s.transpose
                  FROM songs s ORDER BY s.title COLLATE NOCASE, s.id",
             )?
             .query_map([], |r| {
@@ -338,6 +360,9 @@ impl Database {
                     source_archive: r.get(8)?,
                     created_at: r.get(9)?,
                     last_opened_at: r.get(10)?,
+                    artist: r.get(11)?,
+                    song_key: r.get(12)?,
+                    transpose: r.get(13)?,
                 })
             })?
             .collect::<Result<_, _>>()?)
@@ -389,6 +414,34 @@ impl Database {
         if n == 0 { Err(DbError::NotFound(format!("canción {id}"))) } else { Ok(()) }
     }
 
+    /// Key the song is played in, in semitones from the recording (-12..12).
+    pub fn set_song_transpose(&self, id: i64, semitones: i32) -> Result<(), DbError> {
+        if !(-12..=12).contains(&semitones) {
+            return Err(invalid("el cambio de tono va de -12 a +12 semitonos"));
+        }
+        let n = self.conn.execute("UPDATE songs SET transpose = ?2 WHERE id = ?1", params![id, semitones])?;
+        if n == 0 { Err(DbError::NotFound(format!("canción {id}"))) } else { Ok(()) }
+    }
+
+    /// Title, artist, key, notes and time signature (Song Editor).
+    pub fn set_song_details(&self, id: i64, d: &SongDetails) -> Result<(), DbError> {
+        let title = d.title.trim();
+        if title.is_empty() || title.chars().count() > 200 {
+            return Err(invalid("el título debe tener entre 1 y 200 caracteres"));
+        }
+        if !TIME_SIGNATURES.contains(&d.time_signature.as_str()) {
+            return Err(invalid(format!("compás no soportado: {}", d.time_signature)));
+        }
+        if d.artist.chars().count() > 200 || d.song_key.chars().count() > 20 || d.notes.chars().count() > 4000 {
+            return Err(invalid("artista, tonalidad o notas demasiado largos"));
+        }
+        let n = self.conn.execute(
+            "UPDATE songs SET title = ?2, artist = ?3, song_key = ?4, notes = ?5, time_signature = ?6 WHERE id = ?1",
+            params![id, title, d.artist.trim(), d.song_key.trim(), d.notes, d.time_signature],
+        )?;
+        if n == 0 { Err(DbError::NotFound(format!("canción {id}"))) } else { Ok(()) }
+    }
+
     /// Finds a song made of exactly these files (same order), to reopen it
     /// instead of creating a duplicate.
     pub fn find_song_by_files(&self, file_paths: &[String]) -> Result<Option<i64>, DbError> {
@@ -413,7 +466,7 @@ impl Database {
             .conn
             .query_row(
                 "SELECT id, title, original_bpm, bpm_source, downbeat_offset_sec, target_bpm, sections_initialized, last_opened_at,
-                        time_signature, source_archive
+                        time_signature, source_archive, artist, song_key, notes, transpose
                  FROM songs WHERE id = ?1",
                 [id],
                 |r| {
@@ -428,6 +481,10 @@ impl Database {
                         last_opened_at: r.get(7)?,
                         time_signature: r.get(8)?,
                         source_archive: r.get(9)?,
+                        artist: r.get(10)?,
+                        song_key: r.get(11)?,
+                        notes: r.get(12)?,
+                        transpose: r.get(13)?,
                         tracks: Vec::new(),
                         sections: Vec::new(),
                     })

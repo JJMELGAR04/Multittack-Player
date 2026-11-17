@@ -158,6 +158,14 @@ pub struct TrackRequest {
     /// `main` (instruments) or `monitor` (click / cues). None = from the role.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bus: Option<String>,
+    /// Sung vocals: formants are kept when the key changes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub voice: bool,
+}
+
+/// Library roles that are sung vocals (formant-preserving key changes).
+pub fn is_voice_role(role: &str) -> bool {
+    matches!(role, "lead_vocal" | "backing_vocals")
 }
 
 /// Engine role for a library role (`click`, `cues`, `drums`...).
@@ -268,6 +276,8 @@ pub struct SongStatus {
     pub song: Option<LoadedSong>,
     #[serde(default)]
     pub analysis: Option<SongAnalysis>,
+    #[serde(default)]
+    pub preload: Option<PreloadStatus>,
 }
 
 /// Peak levels (linear, ~300 ms release); reading does not reset them.
@@ -310,6 +320,34 @@ pub struct TransportState {
     /// Safety limiter gain on each bus (1 = idle).
     pub main_limiter_gain: f64,
     pub monitor_limiter_gain: f64,
+    /// Scheduled seamless jump (song seconds), if any.
+    pub pending_jump: Option<PendingJump>,
+    /// Active loop [start, end) in song seconds, if any.
+    pub loop_range: Option<(f64, f64)>,
+    /// How far ahead a jump must be scheduled right now (song seconds).
+    pub min_jump_lead_sec: f64,
+    pub jumps_done: u64,
+    /// Key change of the music tracks (semitones).
+    pub transpose: f64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingJump {
+    pub at_sec: f64,
+    pub target_sec: f64,
+}
+
+/// Background decoding of the next song (setlists).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PreloadStatus {
+    /// `idle`, `loading`, `ready`, `skipped` (not enough RAM) or `error`.
+    pub state: String,
+    #[serde(default)]
+    pub tracks: u32,
+    #[serde(default)]
+    pub memory_mb: Option<f64>,
 }
 
 fn static_str(ptr: *const std::ffi::c_char) -> String {
@@ -630,7 +668,50 @@ impl Engine {
             monitor_gain: s.monitor_gain,
             main_limiter_gain: s.main_limiter_gain,
             monitor_limiter_gain: s.monitor_limiter_gain,
+            pending_jump: (s.pending_jump_at >= 0.0)
+                .then_some(PendingJump { at_sec: s.pending_jump_at, target_sec: s.pending_jump_target }),
+            loop_range: (s.loop_end > s.loop_start && s.loop_start >= 0.0).then_some((s.loop_start, s.loop_end)),
+            min_jump_lead_sec: s.min_jump_lead_sec,
+            jumps_done: s.jumps_done,
+            transpose: s.transpose,
         })
+    }
+
+    /// Key change of the music tracks in semitones (-12..12); click and cues are never shifted.
+    pub fn set_transpose(&self, semitones: f64) -> Result<(), EngineError> {
+        self.check_thread()?;
+        // SAFETY: valid engine pointer; owning thread.
+        self.map(unsafe { ffi::lp_engine_set_transpose(self.raw.as_ptr(), semitones) })
+    }
+
+    /// Seamless jump at song second `at_sec` to `target_sec` (bar-synchronous part jumps).
+    pub fn schedule_jump(&self, at_sec: f64, target_sec: f64) -> Result<(), EngineError> {
+        self.check_thread()?;
+        // SAFETY: valid engine pointer; owning thread.
+        self.map(unsafe { ffi::lp_engine_schedule_jump(self.raw.as_ptr(), at_sec, target_sec) })
+    }
+
+    pub fn cancel_jump(&self) -> Result<(), EngineError> {
+        self.check_thread()?;
+        // SAFETY: valid engine pointer; owning thread.
+        self.map(unsafe { ffi::lp_engine_cancel_jump(self.raw.as_ptr()) })
+    }
+
+    /// Seamless loop of [start, end); `end <= start` turns it off.
+    pub fn set_loop(&self, start_sec: f64, end_sec: f64) -> Result<(), EngineError> {
+        self.check_thread()?;
+        // SAFETY: valid engine pointer; owning thread.
+        self.map(unsafe { ffi::lp_engine_set_loop(self.raw.as_ptr(), start_sec, end_sec) })
+    }
+
+    /// Decodes a song in the background so that loading it later is instant
+    /// (empty list = forget it).
+    pub fn preload_song(&self, tracks: &[TrackRequest]) -> Result<(), EngineError> {
+        self.check_thread()?;
+        let request = serde_json::json!({ "tracks": tracks }).to_string();
+        let c = CString::new(request).map_err(|_| EngineError::InvalidArgument(": ruta con carácter NUL".into()))?;
+        // SAFETY: valid engine pointer and NUL-terminated string; owning thread.
+        self.map(unsafe { ffi::lp_engine_preload_song(self.raw.as_ptr(), c.as_ptr()) })
     }
 }
 
@@ -763,6 +844,7 @@ mod tests {
                 name: f.replace(".wav", ""),
                 role: None,
                 bus: None,
+                voice: false,
             })
             .collect();
         engine.load_song(&tracks, None, 4).expect("load");
@@ -808,11 +890,52 @@ mod tests {
         std::thread::sleep(Duration::from_millis(300));
         let t = engine.transport().unwrap();
         assert!(t.position_sec > 5.0 && t.position_sec < 5.5, "position {}", t.position_sec);
+
+        // Seamless jump scheduled at 6.0 s back to 1.0 s.
+        assert!(engine.schedule_jump(t.position_sec + 0.05, 1.0).is_err(), "too close must be refused");
+        engine.schedule_jump(6.0, 1.0).unwrap();
+        assert!(engine.transport().unwrap().pending_jump.is_some());
+        std::thread::sleep(Duration::from_millis(1000));
+        let t = engine.transport().unwrap();
+        assert_eq!(t.jumps_done, 1);
+        assert!(t.pending_jump.is_none());
+        assert!(t.position_sec > 1.0 && t.position_sec < 1.6, "position after the jump {}", t.position_sec);
+        engine.set_loop(1.5, 2.5).unwrap();
+        assert_eq!(engine.transport().unwrap().loop_range, Some((1.5, 2.5)));
+        engine.set_loop(0.0, 0.0).unwrap();
+        engine.set_transpose(-2.0).unwrap();
+        assert_eq!(engine.transport().unwrap().transpose, -2.0);
+        assert!(engine.set_transpose(13.0).is_err());
+        engine.set_transpose(0.0).unwrap();
         engine.stop().unwrap();
         std::thread::sleep(Duration::from_millis(100));
         let t = engine.transport().unwrap();
         assert_eq!(t.play_state, PlayState::Stopped);
         assert_eq!(t.position_sec, 0.0);
         assert_eq!(t.underruns, 0);
+
+        // Preloading: the next song decodes in the background and then loads instantly.
+        let next: Vec<TrackRequest> = vec![TrackRequest {
+            path: dir.join("Pulse.wav").to_string_lossy().into_owned(),
+            name: "Pulse".into(),
+            role: None,
+            bus: None,
+            voice: false,
+        }];
+        engine.preload_song(&next).unwrap();
+        let mut ready = false;
+        for _ in 0..200 {
+            if engine.song_status().unwrap().preload.map(|p| p.state == "ready").unwrap_or(false) {
+                ready = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert!(ready, "preload did not finish");
+        engine.load_song(&next, None, 4).unwrap();
+        let st = engine.song_status().unwrap();
+        assert_eq!(st.state, "ready", "a preloaded song is installed without waiting");
+        assert_eq!(st.song.unwrap().tracks.len(), 1);
+        assert_eq!(st.preload.unwrap().state, "idle");
     }
 }

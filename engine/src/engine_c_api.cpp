@@ -216,6 +216,50 @@ lp_result lp_engine_get_output_info (lp_engine* engine, char* buffer, size_t cap
     return guarded (engine, [&] { return writeJson (engine->impl.getOutputInfoJson(), buffer, capacity, out_required); });
 }
 
+/** Parses {"tracks":[{path,name,role,bus}]}. allowEmpty: [] is valid (preload: forget). */
+static bool parseTrackRequests (lp_engine* engine, const juce::var& parsed, std::vector<liveplayer::TrackRequest>& requests, bool allowEmpty)
+{
+    const auto* tracks = parsed.getProperty ("tracks", {}).getArray();
+    if (tracks == nullptr || (tracks->isEmpty() && ! allowEmpty))
+    {
+        engine->impl.setLastError ("Solicitud inválida: se esperaba {\"tracks\":[...]}");
+        return false;
+    }
+    for (const auto& t : *tracks)
+    {
+        liveplayer::TrackRequest r;
+        r.path = t.getProperty ("path", {}).toString().toStdString();
+        r.name = t.getProperty ("name", {}).toString().toStdString();
+        const auto role = t.getProperty ("role", {}).toString();
+        if (role == "click") r.role = liveplayer::roleClick;
+        else if (role == "guide") r.role = liveplayer::roleGuide;
+        else if (role == "music") r.role = liveplayer::roleMusic;
+        const auto bus = t.getProperty ("bus", {}).toString();
+        if (bus == "monitor") r.bus = liveplayer::busMonitor;
+        else if (bus == "main") r.bus = liveplayer::busMain;
+        r.voice = (bool) t.getProperty ("voice", false);
+        if (r.path.empty())
+        {
+            engine->impl.setLastError ("Solicitud inválida: pista sin \"path\"");
+            return false;
+        }
+        requests.push_back (std::move (r));
+    }
+    return true;
+}
+
+lp_result lp_engine_preload_song (lp_engine* engine, const char* request_json)
+{
+    if (engine == nullptr || request_json == nullptr)
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] {
+        std::vector<liveplayer::TrackRequest> requests;
+        if (! parseTrackRequests (engine, juce::JSON::parse (juce::String::fromUTF8 (request_json)), requests, true))
+            return LP_ERR_INVALID_ARGUMENT;
+        return engine->impl.preloadSong (std::move (requests)) ? LP_OK : LP_ERR_INTERNAL;
+    });
+}
+
 lp_result lp_engine_load_song (lp_engine* engine, const char* request_json)
 {
     if (engine == nullptr || request_json == nullptr)
@@ -223,33 +267,9 @@ lp_result lp_engine_load_song (lp_engine* engine, const char* request_json)
 
     return guarded (engine, [&] {
         const auto parsed = juce::JSON::parse (juce::String::fromUTF8 (request_json));
-        const auto* tracks = parsed.getProperty ("tracks", {}).getArray();
-        if (tracks == nullptr || tracks->isEmpty())
-        {
-            engine->impl.setLastError ("Solicitud inválida: se esperaba {\"tracks\":[...]}");
-            return LP_ERR_INVALID_ARGUMENT;
-        }
-
         std::vector<liveplayer::TrackRequest> requests;
-        for (const auto& t : *tracks)
-        {
-            liveplayer::TrackRequest r;
-            r.path = t.getProperty ("path", {}).toString().toStdString();
-            r.name = t.getProperty ("name", {}).toString().toStdString();
-            const auto role = t.getProperty ("role", {}).toString();
-            if (role == "click") r.role = liveplayer::roleClick;
-            else if (role == "guide") r.role = liveplayer::roleGuide;
-            else if (role == "music") r.role = liveplayer::roleMusic;
-            const auto bus = t.getProperty ("bus", {}).toString();
-            if (bus == "monitor") r.bus = liveplayer::busMonitor;
-            else if (bus == "main") r.bus = liveplayer::busMain;
-            if (r.path.empty())
-            {
-                engine->impl.setLastError ("Solicitud inválida: pista sin \"path\"");
-                return LP_ERR_INVALID_ARGUMENT;
-            }
-            requests.push_back (std::move (r));
-        }
+        if (! parseTrackRequests (engine, parsed, requests, false))
+            return LP_ERR_INVALID_ARGUMENT;
         const double bpm = parsed.getProperty ("bpm", 0.0);
         const int beats = parsed.getProperty ("beatsPerBar", 4);
         if (! std::isfinite (bpm) || bpm < 0.0 || bpm > 400.0 || beats < 1 || beats > 16)
@@ -390,6 +410,65 @@ lp_result lp_engine_seek (lp_engine* engine, double position_sec)
     });
 }
 
+lp_result lp_engine_schedule_jump (lp_engine* engine, double at_sec, double target_sec)
+{
+    if (engine == nullptr || ! std::isfinite (at_sec) || ! std::isfinite (target_sec) || at_sec < 0.0 || target_sec < 0.0)
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] {
+        LP_REQUIRE_SONG (engine);
+        auto& player = engine->impl.getPlayer();
+        if (player.snapshot().playState != 1)
+        {
+            engine->impl.setLastError ("La canción no está sonando: usa un salto directo.");
+            return LP_ERR_INVALID_STATE;
+        }
+        if (! player.scheduleJump (at_sec, target_sec))
+        {
+            engine->impl.setLastError ("El salto está demasiado cerca: prográmalo al menos "
+                                       + std::to_string ((int) std::ceil (player.minJumpLeadSeconds() * 1000.0)) + " ms antes.");
+            return LP_ERR_INVALID_ARGUMENT;
+        }
+        return LP_OK;
+    });
+}
+
+lp_result lp_engine_set_transpose (lp_engine* engine, double semitones)
+{
+    if (engine == nullptr || ! std::isfinite (semitones) || semitones < -12.0 || semitones > 12.0)
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] {
+        LP_REQUIRE_SONG (engine);
+        engine->impl.getPlayer().setTranspose (semitones);
+        return LP_OK;
+    });
+}
+
+lp_result lp_engine_cancel_jump (lp_engine* engine)
+{
+    if (engine == nullptr)
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] {
+        engine->impl.getPlayer().cancelJump();
+        return LP_OK;
+    });
+}
+
+lp_result lp_engine_set_loop (lp_engine* engine, double start_sec, double end_sec)
+{
+    if (engine == nullptr || ! std::isfinite (start_sec) || ! std::isfinite (end_sec))
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] {
+        LP_REQUIRE_SONG (engine);
+        if (end_sec > start_sec && end_sec - start_sec < 0.25)
+        {
+            engine->impl.setLastError ("El bucle es demasiado corto (mínimo 0,25 s).");
+            return LP_ERR_INVALID_ARGUMENT;
+        }
+        engine->impl.getPlayer().setLoop (start_sec, end_sec);
+        return LP_OK;
+    });
+}
+
 lp_result lp_engine_set_master_gain (lp_engine* engine, double gain)
 {
     if (engine == nullptr || ! std::isfinite (gain) || gain < 0.0 || gain > 4.0)
@@ -434,6 +513,13 @@ lp_result lp_engine_get_transport (lp_engine* engine, lp_transport_state* out_st
         out_state->monitor_gain = s.monitorGain;
         out_state->main_limiter_gain = s.mainLimiterGain;
         out_state->monitor_limiter_gain = s.monitorLimiterGain;
+        out_state->pending_jump_at = s.pendingJumpAt;
+        out_state->pending_jump_target = s.pendingJumpTarget;
+        out_state->loop_start = s.loopStart;
+        out_state->loop_end = s.loopEnd;
+        out_state->min_jump_lead_sec = engine->impl.getPlayer().minJumpLeadSeconds();
+        out_state->jumps_done = s.jumpsDone;
+        out_state->transpose = s.transpose;
         return LP_OK;
     });
 }

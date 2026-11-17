@@ -64,6 +64,9 @@ public:
 
     /** bpmHint > 0: the tempo is known (user); beatsPerBar: bar length for the grid. */
     bool loadSong (std::vector<TrackRequest> tracks, double bpmHint, int beatsPerBar);
+    /** Decodes a song in the background (low priority) so that a later
+        loadSong() with the same tracks starts instantly. Empty = forget it. */
+    bool preloadSong (std::vector<TrackRequest> tracks);
     juce::String getSongStatusJson();
     bool getPeaks (int track, std::vector<juce::uint8>& out);
     /** downbeatOffsetSec < 0: estimate the bar grid for the given bpm. */
@@ -89,6 +92,8 @@ private:
     class AnalysisJob;
 
     void harvestLoader();
+    void harvestPreload();
+    void installSong (SongPtr newSong, std::vector<std::vector<juce::uint8>> peaks, std::vector<juce::uint8> mix);
     void harvestAnalysis();
     void startAnalysis (double bpm, double downbeat, int beatsPerBar);
     void updateBusTrims();
@@ -117,8 +122,16 @@ private:
     std::unique_ptr<SongLoader> loader;
     bool loaderIsReload = false; // re-decoding the same song for a new sample rate
     std::vector<TrackRequest> songRequests;
+
+    // Next song decoded ahead of time (setlists).
+    std::unique_ptr<SongLoader> preloader;
+    std::vector<TrackRequest> preloadRequests;
+    SongPtr preloadedSong;
+    std::vector<std::vector<juce::uint8>> preloadedPeaks;
+    std::vector<juce::uint8> preloadedMix;
+    std::string preloadState = "idle";
     std::vector<float> trackGains;
-    double reloadPosition = 0.0, reloadTempo = 1.0;
+    double reloadPosition = 0.0, reloadTempo = 1.0, reloadTranspose = 0.0;
     bool reloadPlaying = false;
     juce::uint64 nextLoadId = 1;
     juce::uint64 currentLoadId = 0;
