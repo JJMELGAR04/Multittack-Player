@@ -1,0 +1,16 @@
+{
+  "name": "liveplayer",
+  "private": true,
+  "version": "0.1.0",
+  "license": "AGPL-3.0-or-later",
+  "description": "LIVEPLAYER - professional live multitrack playback",
+  "workspaces": [
+    "apps/desktop"
+  ],
+  "scripts": {
+    "dev": "npm run tauri:dev -w apps/desktop",
+    "build": "npm run tauri:build -w apps/desktop",
+    "test": "npm run test -w apps/desktop",
+    "typecheck": "npm run typecheck -w apps/desktop"
+  }
+}

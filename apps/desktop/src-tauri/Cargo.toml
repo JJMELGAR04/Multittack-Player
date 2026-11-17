@@ -1,0 +1,21 @@
+[package]
+name = "liveplayer-desktop"
+description = "LIVEPLAYER desktop application (Tauri 2 shell)"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[lib]
+name = "liveplayer_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+liveplayer-engine = { path = "../../../crates/liveplayer-engine" }
+liveplayer-db = { path = "../../../crates/liveplayer-db" }
