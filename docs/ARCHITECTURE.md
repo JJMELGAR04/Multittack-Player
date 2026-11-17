@@ -59,10 +59,19 @@ archivos ──SongLoader──► SongData (RAM, frecuencia del dispositivo, in
                               │  cambio de modo = fundido cruzado de 21 ms; tempo con deslizamiento de ~120 ms
                          ChunkRing (lock-free, 2 canales por pista)
                               │
-               Player (hilo de audio): suma + volumen maestro suavizado + fundidos de 10 ms
+               Player (hilo de audio): ganancia por pista (rampa 10 ms) → suma en 2 buses:
+                 · PRINCIPAL (instrumentos) × fundido × volumen maestro × ajuste automático de nivel
+                 · MONITOREO (click + cues) × fundido × volumen de monitoreo × ajuste automático
+                 → limitador de seguridad por bus (−0,5 dBFS, 1 ms de anticipación)
                               │
-                         dispositivo de salida
+               mapa de salidas: estéreo (todo en 1/2) · dividido (instr. mono → 1, click → 2)
+                                · 4 canales (instr. → 1/2, click → 3/4)
+                              │
+                         dispositivo de salida (hasta 4 canales)
 ```
+
+- **Ajuste automático de nivel**: al cargar (y al cambiar el rol de una pista) se mide el pico real de la suma de cada bus y se baja lo justo para que quede en −1 dBFS. Los stems suelen venir normalizados uno por uno: en *Ancient* la suma de instrumentos llegaba a +6,1 dBFS (saturaba). Es solo ganancia: no cambia el sonido.
+- **Limitador**: retención de pico + filtro de caja (garantiza no pasar del techo sin escalones de ganancia). Normalmente en reposo; protege ante cambios de volumen por pista (fase 3).
 
 - **Saltos** (secciones, clic en la forma de onda): el hilo de audio desvanece en 10 ms, descarta lo pre-renderizado (cada bloque lleva un número de "generación") y entra con otro fundido desde la nueva posición.
 - **Cambio de canción**: se desconecta el callback (JUCE espera a que termine el que está en curso), se instala la nueva canción y se vuelve a conectar. La canción anterior se libera en el hilo de control, nunca en el de audio.
@@ -91,7 +100,12 @@ En el escritorio, el hilo principal ejecuta el bucle de mensajes nativo (Win32 e
 | `studio_detect_sections(bpm, downbeatOffsetSec)` | vuelve a detectar secciones con un tempo confirmado | sí |
 | `studio_save_sections` / `studio_save_tempo` / `studio_get_song` / `studio_recent_songs` | persistencia de la canción | no |
 | `transport_play/pause/stop/seek/set_master_gain/set_tempo_ratio/state` | transporte | sí |
-| `output_info` | dispositivo, frecuencia, buffer y latencia de salida | sí |
+| `output_info` | dispositivo, frecuencia, buffer, canales y latencia de salida | sí |
+| `studio_import_inspect(paths)` | lee un zip (lo extrae a la biblioteca), una carpeta o archivos; sugiere título, BPM y qué es cada archivo; detecta si ya se importó | no (solo archivos) |
+| `studio_import_preview(tracks)` | carga las pistas para poder escuchar cada una sola antes de guardar | sí |
+| `studio_import_commit(commit)` / `studio_import_cancel` | guarda la canción con lo confirmado (sin volver a decodificar) / descarta y borra lo extraído | sí |
+| `studio_set_track_gain` / `studio_update_track` / `studio_set_song_info` | escuchar una pista sola / cambiar nombre o rol (su salida sigue al rol) / título y compás | sí / sí / no |
+| `studio_set_output` / `studio_output_settings` | modo de salida y volumen de click/cues (se guardan) | sí |
 
 Los comandos son síncronos y cortos: el trabajo pesado (decodificar, analizar) ocurre en hilos del motor y la UI consulta `studio_status` (cada 250 ms mientras hay trabajo) y `transport_state` (25 veces por segundo; el cursor se interpola entre lecturas).
 

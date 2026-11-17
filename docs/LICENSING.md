@@ -14,6 +14,7 @@ LIVEPLAYER se distribuye bajo **GNU AGPL-3.0-or-later** (texto completo en [`LIC
 | r8brain-free-src 6.5 | MIT | Sí | Conversión de frecuencia de muestreo de alta calidad. Créditos solicitados por el autor: *"Sample rate converter designed by Aleksey Vaneev of Voxengo"*. |
 | Decodificador MP3 de JUCE | AGPLv3 (con JUCE) | Sí | Las patentes de MP3 vencieron en 2017. |
 | Tauri 2 + tauri-plugin-dialog | MIT / Apache-2.0 | Sí | El plugin solo se usa para el diálogo nativo de abrir archivos. |
+| zip (crate de Rust) | MIT | Sí | Solo descompresión (deflate) para importar canciones en zip. |
 | React, React Router, lucide-react | MIT / ISC | Sí | |
 | Tailwind CSS, Vite, Vitest | MIT | Sí | |
 | TypeScript | Apache-2.0 | Sí | |

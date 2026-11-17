@@ -17,6 +17,11 @@ Reproducción multitrack real y sincronizada con calidad profesional, más:
 
 Criterio del usuario: *todo debe sonar profesional*, sin cortes, clics ni artefactos evitables.
 
+### Ampliación 2 (pedida al probar con una canción real, 2026-11-17)
+- **Importar un zip**: leer su contenido y preguntar título, BPM y compás.
+- **Identificar archivos**: si un nombre no dice qué es (p. ej. «llmmD»), mostrarlo, dejar escucharlo solo y preguntar qué es; tomarlo como tal («Batería»).
+- **Dos señales de salida**: instrumentos por un lado (PA) y click + cues por otro (solo la banda). *Se adelanta una parte de la fase 4 a petición del usuario.*
+
 ## Funcionalidades
 
 Leyenda: ✅ Implementado y probado · 🟡 Implementado, prueba parcial · ⏳ Pendiente
@@ -46,36 +51,57 @@ Leyenda: ✅ Implementado y probado · 🟡 Implementado, prueba parcial · ⏳ 
 | Persistencia (canción, pistas, BPM, tempo elegido, secciones) en SQLite | ✅ | Migración 2 + 5 pruebas de base de datos |
 | Panel de diagnóstico: carga de audio y de render, cortes, latencia, memoria | ✅ | E2E: **0 cortes** en toda la prueba |
 | Atajos: Espacio, Esc, Inicio, 1–9 | ✅ | |
+| **Importar zip** (extrae solo audio, ignora basura de macOS, protegido contra *zip-slip* y *zip bombs*) | ✅ | Prueba Rust + E2E con zip de 5 pistas |
+| Diálogo de importación: título y BPM sugeridos desde el nombre, compás, «¿qué es?» por archivo | ✅ | E2E: «llmmD.wav» → elegido «Batería» → guardado como batería |
+| Escuchar cada archivo solo antes de guardar (rampa de 10 ms, sin clics) | ✅ | Prueba nativa + E2E |
+| Reconocimiento automático de pistas por nombre (inglés/español) | ✅ | 26 nombres típicos en la prueba |
+| Reimportar el mismo zip abre la canción guardada (sin duplicar) | ✅ | E2E |
+| BPM dado por el usuario: se usa tal cual y solo se busca dónde empieza el compás | ✅ | E2E: secciones correctas con BPM 96 introducido |
+| Compases 2/4, 3/4, 4/4, 5/4, 6/8, 12/8 (rejilla de compases y secciones) | ✅ | Pruebas de UI y de base de datos |
+| **Bus principal (instrumentos) y bus de monitoreo (click + cues)** | ✅ | Prueba nativa: salida exacta por canal en cada modo |
+| Modos de salida: ensayo (todo en 1-2), en vivo 2 salidas (instr. → 1, click → 2), en vivo 4 salidas (1-2 / 3-4) | ✅ | Prueba nativa + E2E. El de 4 salidas solo se ofrece si el dispositivo tiene 4+. |
+| Volumen de click/cues separado; modo y volumen se guardan | ✅ | |
+| Cambiar después qué es una pista (su salida sigue al rol) | ✅ | Prueba de base de datos |
+| **Ajuste automático de nivel** por canción (evita saturar al sumar stems) | ✅ | *Ancient*: la suma llegaba a +6,1 dBFS (0,53 % de muestras saturadas); ahora queda a −1 dBFS |
+| **Limitador de seguridad** por bus (−0,5 dBFS, 1 ms de anticipación, sin escalones) | ✅ | Con picos de +6 dBFS: salida −0,50 dBFS exactos; por debajo del techo el audio pasa bit a bit |
 
 ## Pruebas realizadas (2026-11-17, Windows 10 Home, i5-7200U 2 núcleos / 4 hilos, 24 GB)
 
 | Suite | Comando | Resultado |
 |---|---|---|
 | Typecheck | `npm run typecheck` | ✅ 0 errores |
-| UI (Vitest) | `npm test` | ✅ 19/19 |
+| UI (Vitest) | `npm test` | ✅ 24/24 |
 | Motor C++: ABI pública | `ctest` → `engine_c_api` | ✅ |
 | Motor C++: audio, sincronía, rendimiento y análisis | `ctest` → `engine_audio` | ✅ todas (resultados en la tabla de arriba) |
 | Rust `liveplayer-engine` | `cargo test -p liveplayer-engine` | ✅ 2/2, incluida una reproducción real en silencio por la tarjeta de sonido |
-| Rust `liveplayer-db` | `cargo test -p liveplayer-db` | ✅ 9/9 |
-| Rust `liveplayer-desktop` | `cargo test -p liveplayer-desktop` | ✅ 1/1 |
-| E2E sobre la app real | `npm run test:e2e -w apps/desktop` | ✅ **26/26** (con el volumen maestro a 0 para no hacer ruido) |
+| Rust `liveplayer-db` | `cargo test -p liveplayer-db` | ✅ 10/10 |
+| Rust `liveplayer-desktop` | `cargo test -p liveplayer-desktop` | ✅ 4/4 (zip, reconocimiento de pistas, título/BPM) |
+| E2E sobre la app real | `npm run test:e2e -w apps/desktop` | ✅ **38/38** (silenciosa; usa una carpeta de datos aislada, no toca tu biblioteca) |
 
 ### Errores encontrados y corregidos durante la fase
+- (ampliación 2) Umbral de secciones inflado por silencios → mediana/MAD. Suma de stems saturando → ajuste de nivel + limitador. `envPrefix` de Vite con «*» nunca coincidía. Prueba E2E desactualizada (ABI v3).
 1. La rejilla de compases juntaba los dos primeros compases cuando el compás empezaba casi en 0 → la intro no se separaba. Corregido.
 2. El tiempo de los golpes salía ~65 ms adelantado (no se compensaba el centro de la ventana FFT). Ahora se usa una FFT corta para los golpes y se compensa. Error actual < 1 ms.
 3. «Metrónomo» no se reconocía como pista de click (por la «ó»). Corregido; además «Cuerdas» ya no se confunde con una pista guía («cue»).
 4. Macros `min`/`max` de `windows.h` (incluido por r8brain) rompían la compilación → `NOMINMAX`.
 
+## Prueba con una canción real: *Ancient* (7 MP3, LAME 3.100, 44,1 kHz, 250 s)
+Analizada con el motor (`liveplayer_inspect`):
+- Las 7 pistas quedan con la duración exacta declarada en su etiqueta LAME (250,000 s / 249,945 s): el recorte del retardo MP3 se aplica. Todas tienen el mismo retardo (576), así que están alineadas entre sí.
+- Tempo: **96 BPM** desde la pista de click, confianza 100 %.
+- Saturación detectada y corregida: la suma de instrumentos llegaba a +6,1 dBFS.
+- Secciones: la primera versión fallaba (una «estrofa» de 172 s) porque el silencio final inflaba el umbral. Corregido con estadística robusta: cortes en 8,75 / 28,75 / 66,25 / 121,25 / 151,25 / 181,25 / 196,25 s (todos en línea de compás). **Falta que confirmes la estructura real** escuchándola; los nombres son lo menos fiable.
+
 ## Pendiente de verificar con material real (necesito tu ayuda)
 1. **Escucha:** la calidad se midió de forma objetiva (tono exacto, nivel idéntico, sin clics, sin cortes). Falta tu prueba de oído con tus multitracks, sobre todo con el tempo cambiado.
-2. **MP3 reales:** abrir una canción que tenga pistas MP3 (idealmente mezcladas con WAV) y comprobar que suenan en sincronía.
+2. **Retardo absoluto de los MP3:** *Ancient* confirma que MP3 del mismo codificador quedan alineados entre sí. Para garantizar la alineación exacta al **mezclar MP3 con WAV** necesito comparar contra FFmpeg (no se pudo instalar automáticamente; ver el informe).
 3. **Secciones en canciones reales:** la detección acierta en la canción sintética. En canciones reales los cortes suelen quedar bien y los nombres pueden confundirse (por ejemplo, una estrofa parecida al coro). Por eso se pueden corregir a mano.
 
 ## Limitaciones conocidas
-- Se asume compás de 4/4 (la edición de compás llega con el Song Editor, fase 5).
+- Compases soportados: 2/4, 3/4, 4/4, 5/4, 6/8, 12/8 (en 6/8 y 12/8 el BPM cuenta negras con puntillo). Cambios de compás dentro de una canción: fase 5.
 - Un cambio de tempo mientras suena se oye unos ~150 ms después (es el margen de seguridad del render anticipado) y entra con un deslizamiento suave.
 - El salto entre secciones es inmediato con fundido de 10 ms. El salto «al siguiente compás» para el modo en vivo es de la fase 5.
-- Se usa siempre la salida predeterminada de Windows (modo compartido). Elegir dispositivo, ASIO y modo exclusivo es de la fase 4.
+- Se usa la salida predeterminada de Windows (modo compartido, hasta 4 canales). Elegir dispositivo, ASIO, modo exclusivo y asignar cualquier canal es de la fase 4.
 - WASAPI compartido no informa los fallos del driver («n/d» en el panel). Los cortes del render propio sí se cuentan.
 - Todo el audio en RAM: una canción de 16 pistas de 5 min ocupa ~1,8 GB. Con 24 GB no hay problema; en tabletas (fase 6) habrá que leer desde disco.
 - La biblioteca completa de canciones es de la fase 3. Por ahora: abrir pistas y lista de recientes.
@@ -84,6 +110,7 @@ Leyenda: ✅ Implementado y probado · 🟡 Implementado, prueba parcial · ⏳ 
 - **Signalsmith Stretch 1.4.0** + **Signalsmith Linear 0.6.4** (MIT): cambio de tempo.
 - **r8brain-free-src 6.5** (MIT): conversión de frecuencia. *Sample rate converter designed by Aleksey Vaneev of Voxengo.*
 - **tauri-plugin-dialog 2.8.4** (MIT/Apache-2.0): diálogo nativo de abrir archivos.
+- **zip 9.6** (MIT, crate de Rust, solo descompresión).
 - Decodificador MP3 de JUCE (ya incluido; AGPLv3).
 - Herramienta de desarrollo: `tools/generate-test-song.mjs` (Node) genera la canción de prueba (`test-audio/`, ignorada por git).
 
