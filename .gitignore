@@ -50,3 +50,5 @@ test-audio/
 
 # User music for local testing (copyrighted, never committed)
 MUSICA/
+# Design references from the user (local only)
+Visualizacion/

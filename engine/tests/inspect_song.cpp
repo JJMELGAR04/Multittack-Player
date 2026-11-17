@@ -60,6 +60,43 @@ int main (int argc, char** argv)
     {
         if (! std::strcmp (argv[i], "--bpm") && i + 1 < argc) bpm = std::atof (argv[++i]);
         else if (! std::strcmp (argv[i], "--beats") && i + 1 < argc) beats = std::atoi (argv[++i]);
+        else if (! std::strcmp (argv[i], "--compare") && i + 2 < argc)
+        {
+            // --compare <reference.wav> <file>: decodes <file> with the engine's
+            // loader at the reference's sample rate and finds the lag (in samples)
+            // that best aligns it with the reference (e.g. an FFmpeg decode).
+            const juce::File refFile (juce::String::fromUTF8 (argv[++i]));
+            const std::string file = argv[++i];
+            juce::AudioFormatManager fm;
+            fm.registerBasicFormats();
+            std::unique_ptr<juce::AudioFormatReader> rr (fm.createReaderFor (refFile));
+            if (! rr) { std::printf ("cannot read reference\n"); return 1; }
+            juce::AudioBuffer<float> ref (1, (int) rr->lengthInSamples);
+            rr->read (&ref, 0, ref.getNumSamples(), 0, true, false);
+
+            SongLoader l ({ { file, "x" } }, rr->sampleRate, 1);
+            l.startThread();
+            while (l.getPhase() == SongLoader::Phase::loading) juce::Thread::sleep (10);
+            if (l.getPhase() != SongLoader::Phase::ready) { std::printf ("load failed\n"); return 1; }
+            const auto& ours = l.getSong()->tracks[0].audio;
+            const float* a = ref.getReadPointer (0);
+            const float* b = ours.getReadPointer (0);
+            const int n = std::min (ref.getNumSamples(), ours.getNumSamples());
+            const int from = n / 4, len = std::min (n / 2, (int) rr->sampleRate * 60);
+            double best = -1e300; int bestLag = 0;
+            for (int lag = -3000; lag <= 3000; ++lag)
+            {
+                double sum = 0.0;
+                for (int k = from; k < from + len; k += 3)
+                    sum += (double) a[k] * b[k + lag];
+                if (sum > best) { best = sum; bestLag = lag; }
+            }
+            double err = 0.0, sig = 0.0;
+            for (int k = from; k < from + len; ++k) { err += std::pow (a[k] - b[k + bestLag], 2.0); sig += (double) a[k] * a[k]; }
+            std::printf ("length ref %d / ours %d samples; best lag %d samples; difference at that lag %.1f dB below the signal\n",
+                         ref.getNumSamples(), ours.getNumSamples(), bestLag, 10.0 * std::log10 (sig / std::max (err, 1e-30)));
+            return 0;
+        }
         else if (! std::strcmp (argv[i], "--impulse") && i + 1 < argc)
         {
             juce::AudioFormatManager fm;

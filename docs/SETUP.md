@@ -39,6 +39,7 @@ También se puede indicar una ruta con la variable de entorno `LIVEPLAYER_JUCE_D
 | Pruebas de Rust (motor + base de datos) | `cargo test --workspace` |
 | Pruebas nativas del motor C++ (incluye audio, sincronía, rendimiento y análisis) | `cmake -S engine -B engine/build && cmake --build engine/build --config RelWithDebInfo && ctest --test-dir engine/build -C RelWithDebInfo --output-on-failure` |
 | Prueba E2E sobre la app real (Windows) | `npm run test:e2e -w apps/desktop` |
+| Comparar el decodificado de un archivo con una referencia (p. ej. FFmpeg) | `engine/build/RelWithDebInfo/liveplayer_inspect.exe --compare ref.wav pista.mp3` |
 | Generar la canción de prueba | `node tools/generate-test-song.mjs test-audio` (lo hacen solas las pruebas que la necesitan) |
 
 La primera compilación de JUCE y Rust tarda varios minutos.

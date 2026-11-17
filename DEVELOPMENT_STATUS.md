@@ -29,7 +29,7 @@ Leyenda: ✅ Implementado y probado · 🟡 Implementado, prueba parcial · ⏳ 
 | Funcionalidad | Estado | Evidencia |
 |---|---|---|
 | Carga de WAV, AIFF, FLAC, OGG en segundo plano (varios archivos en paralelo) | ✅ | Prueba nativa + E2E: 5 pistas de 141 s cargadas en 3,8 s |
-| Carga de **MP3** con corrección del retardo del codificador (etiqueta LAME) | 🟡 | El lector de la etiqueta pasa su prueba. **No se probó con un MP3 real**: no hay codificador MP3 en el equipo e instalar FFmpeg fue bloqueado. Ver «Pendiente de verificar». |
+| Carga de **MP3** con corrección del retardo del codificador (etiqueta LAME) | ✅ | **Verificado con FFmpeg** (instalado por el usuario): impulsos codificados con LAME a 44,1/48 kHz y 128/192/320 kbps salen en la muestra exacta; las pistas de *Ancient* coinciden con la decodificación de FFmpeg con **0 muestras de desfase** y la misma longitud. |
 | Todo el audio en RAM y convertido a la frecuencia del dispositivo (r8brain, linear phase) | ✅ | SNR del conversor: **150,8 dB** (inaudible). La reproducción nunca lee del disco. |
 | Reloj común y sincronía exacta entre pistas | ✅ | Dos pistas iguales estiradas dan salida **idéntica muestra a muestra** (diferencia 0,0) |
 | Salida de audio real (WASAPI, dispositivo predeterminado) | ✅ | E2E sobre los auriculares del equipo, 48 kHz / 480 muestras |
@@ -94,8 +94,7 @@ Analizada con el motor (`liveplayer_inspect`):
 
 ## Pendiente de verificar con material real (necesito tu ayuda)
 1. **Escucha:** la calidad se midió de forma objetiva (tono exacto, nivel idéntico, sin clics, sin cortes). Falta tu prueba de oído con tus multitracks, sobre todo con el tempo cambiado.
-2. **Retardo absoluto de los MP3:** *Ancient* confirma que MP3 del mismo codificador quedan alineados entre sí. Para garantizar la alineación exacta al **mezclar MP3 con WAV** necesito comparar contra FFmpeg (no se pudo instalar automáticamente; ver el informe).
-3. **Secciones en canciones reales:** la detección acierta en la canción sintética. En canciones reales los cortes suelen quedar bien y los nombres pueden confundirse (por ejemplo, una estrofa parecida al coro). Por eso se pueden corregir a mano.
+2. **Secciones en canciones reales:** la detección acierta en la canción sintética. En canciones reales los cortes suelen quedar bien y los nombres pueden confundirse (por ejemplo, una estrofa parecida al coro). Por eso se pueden corregir a mano.
 
 ## Limitaciones conocidas
 - Compases soportados: 2/4, 3/4, 4/4, 5/4, 6/8, 12/8 (en 6/8 y 12/8 el BPM cuenta negras con puntillo). Cambios de compás dentro de una canción: fase 5.
