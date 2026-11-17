@@ -73,6 +73,13 @@ archivos ──SongLoader──► SongData (RAM, frecuencia del dispositivo, in
                          dispositivo de salida (ASIO / WASAPI; todas sus salidas abiertas, hasta 32)
 ```
 
+### Cambio de tono (fase 5)
+
+- `lp_engine_set_transpose(semitones)`: el render pasa a modo time-stretch (Signalsmith Stretch) como con el tempo, y cada pista de música recibe `setTransposeSemitones` con un límite de tonalidad de 8 kHz (los platos y el ruido no se "afinan").
+- Las pistas de click y cues (rol del motor `click`/`guide`, que sigue lo que el usuario asigne) se transponen 0: no cambian.
+- Las voces cantadas (`"voice":true` en la petición de carga; roles `lead_vocal`/`backing_vocals`) usan `setFormantSemitones(0, true)`: conservan los formantes.
+- Tono 0 y tempo original = audio original intacto (copia directa). El tono se guarda por canción (Studio) y por canción de setlist (Live).
+
 ### Saltos musicales, bucles y carga anticipada (fase 5)
 
 - **Salto al compás sin cortes**: el hilo de render tiene dos `SongRenderer`. Cuando el bloque que va a producir contiene la muestra exacta del salto (p. ej. la siguiente línea de compás), arranca el segundo en el destino alineado a esa muestra y mezcla ambos con un fundido de igual potencia de 5 ms; después intercambian los papeles. No hay silencio ni desplazamiento: el click mantiene su rejilla. La UI calcula el instante (siguiente compás, final de la parte o inmediato) y lo programa con `lp_engine_schedule_jump`; debe estar al menos `min_jump_lead_sec` por delante (lo que el render ya tiene preparado, ~0,25 s × tempo).
@@ -130,6 +137,7 @@ En el escritorio, el hilo principal ejecuta el bucle de mensajes nativo (Win32 e
 | `studio_set_track_mix(songId, position, mix)` | guarda volumen (−60…+8 dB), mute y solo de una pista con la canción | no (el motor recibe la ganancia aparte) |
 | `library_songs` / `library_rename` / `library_delete` | biblioteca: listar con BPM, compás, duración, pistas y partes / renombrar / quitar (borra solo archivos extraídos por LIVEPLAYER) | no |
 | `transport_schedule_jump(atSec, targetSec)` / `transport_cancel_jump` / `transport_set_loop(start, end)` | salto musical sin cortes / cancelarlo / bucle de una parte | sí |
+| `transport_set_transpose(semitones)` / `studio_save_transpose(songId, semitones)` | cambio de tono (música, sin click ni cues) / guardarlo con la canción | sí / no |
 | `studio_preload_song(songId)` | prepara en segundo plano la siguiente canción del setlist | sí |
 | `studio_set_song_details(songId, details)` | título, artista, tonalidad, notas y compás (Song Editor) | no |
 | `setlist_list/get/create/save/delete/duplicate` | setlists (se guarda el setlist entero de una vez) | no |

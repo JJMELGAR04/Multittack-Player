@@ -7,6 +7,7 @@ const song = (id: number, title: string, extra: Partial<LibrarySong> = {}): Libr
   title,
   artist: "",
   songKey: "",
+  transpose: 0,
   originalBpm: null,
   targetBpm: null,
   timeSignature: "4/4",

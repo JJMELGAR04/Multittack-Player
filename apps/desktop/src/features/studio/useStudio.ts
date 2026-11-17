@@ -96,11 +96,18 @@ export interface Studio {
   saveMix: () => Promise<void>;
   /** Goes back to the mix saved with the song. */
   restoreMix: () => void;
+  /** Key change being played (semitones). */
+  transpose: number;
+  setTranspose: (semitones: number) => void;
 }
 
 export interface StudioOptions {
   /** false (Live Mode): mixer changes are for the moment only, until saveMix(). */
   persistMix?: boolean;
+  /** false (Live Mode): key changes are not saved with the song (the setlist keeps them). */
+  persistTranspose?: boolean;
+  /** Key to use when the next song loads instead of the song's own (Live: the setlist's). */
+  transposeOverride?: { current: number | null };
 }
 
 function savedMix(record: SongRecord, trackCount: number): MixerState {
@@ -123,6 +130,9 @@ function ratioOf(song: SongRecord | null): number {
 
 export function useStudio(options: StudioOptions = {}): Studio {
   const persistMix = options.persistMix ?? true;
+  const persistTranspose = options.persistTranspose ?? true;
+  const transposeOverride = options.transposeOverride;
+  const [transpose, setTransposeState] = useState(0);
   const [mixDirty, setMixDirty] = useState(false);
   const native = isNativeAvailable();
   const [status, setStatus] = useState<StudioStatus | null>(null);
@@ -253,6 +263,9 @@ export function useStudio(options: StudioOptions = {}): Studio {
         setSong(record);
         if (record) {
           await backend.setTempoRatio(ratioOf(record));
+          const key = transposeOverride?.current ?? record.transpose ?? 0;
+          setTransposeState(key);
+          await backend.setTranspose(key);
           // Restore the saved mixer of this song.
           const saved = savedMix(record, trackCount);
           setMixer(saved);
@@ -563,6 +576,19 @@ export function useStudio(options: StudioOptions = {}): Studio {
     setMixDirty(false);
   }, [mixer]);
 
+  const setTranspose = useCallback(
+    (semitones: number) => {
+      const n = Math.max(-12, Math.min(12, Math.round(semitones)));
+      setTransposeState(n);
+      run(backend.setTranspose(n));
+      const current = songRef.current;
+      if (!persistTranspose || !current) return;
+      setSong({ ...current, transpose: n });
+      later(`transpose-${current.id}`, () => backend.saveTranspose(current.id, n), 300);
+    },
+    [run, later, persistTranspose],
+  );
+
   const restoreMix = useCallback(() => {
     const current = songRef.current;
     if (!current) return;
@@ -665,5 +691,7 @@ export function useStudio(options: StudioOptions = {}): Studio {
     mixDirty,
     saveMix,
     restoreMix,
+    transpose,
+    setTranspose,
   };
 }

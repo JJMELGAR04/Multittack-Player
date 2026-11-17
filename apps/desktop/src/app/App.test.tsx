@@ -38,7 +38,9 @@ describe("navigation", () => {
     renderAt("/studio");
     expect(screen.getByRole("heading", { level: 1, name: "Multitrack Studio" })).toBeTruthy();
     expect(screen.getByText(/no hay motor de audio disponible/)).toBeTruthy();
-    expect((screen.getByRole("button", { name: /Abrir pistas/ }) as HTMLButtonElement).disabled).toBe(true);
+    // No import here any more: a search box over the library (importing lives in Songs).
+    expect(screen.queryByRole("button", { name: /Abrir pistas/ })).toBeNull();
+    for (const box of screen.getAllByRole("textbox", { name: "Buscar canción para abrir" })) expect((box as HTMLInputElement).disabled).toBe(true);
   });
 
   it("renders the song library (phase 3) without faking data outside Tauri", () => {

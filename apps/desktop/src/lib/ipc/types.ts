@@ -254,6 +254,8 @@ export interface SongRecord extends SongTempo {
   artist: string;
   songKey: string;
   notes: string;
+  /** Semitones the song is played in (0 = recorded key). */
+  transpose: number;
   sectionsInitialized: boolean;
   timeSignature: TimeSignature;
   sourceArchive: string | null;
@@ -294,6 +296,8 @@ export interface TransportState {
   /** How far ahead a jump must be scheduled right now. */
   minJumpLeadSec: number;
   jumpsDone: number;
+  /** Key change of the music tracks (semitones). */
+  transpose: number;
 }
 
 // ---- Phase 5: Song Editor, setlists, backup -----------------------------------
@@ -319,6 +323,9 @@ export interface SetlistSummary {
 export interface SetlistItem {
   songId: number;
   notes: string;
+  /** Key for this setlist only (null = the song's own). */
+  transpose: number | null;
+  songTranspose: number;
   title: string;
   artist: string;
   songKey: string;
@@ -342,7 +349,7 @@ export interface SetlistInput {
   eventDate: string;
   place: string;
   notes: string;
-  items: { songId: number; notes: string }[];
+  items: { songId: number; notes: string; transpose: number | null }[];
 }
 
 export interface BackupReport {
@@ -381,6 +388,7 @@ export interface LibrarySong {
   title: string;
   artist: string;
   songKey: string;
+  transpose: number;
   originalBpm: number | null;
   targetBpm: number | null;
   timeSignature: TimeSignature;
@@ -423,6 +431,8 @@ export interface ImportTrack {
 
 export interface ImportCommit {
   title: string;
+  /** Key of the recording (optional). */
+  songKey?: string | null;
   bpm: number | null;
   timeSignature: TimeSignature;
   sourceArchive: string | null;

@@ -133,6 +133,8 @@ export const backend = {
   scheduleJump: (atSec: number, targetSec: number) => call<void>("transport_schedule_jump", { atSec, targetSec }),
   cancelJump: () => call<void>("transport_cancel_jump"),
   setLoop: (startSec: number, endSec: number) => call<void>("transport_set_loop", { startSec, endSec }),
+  setTranspose: (semitones: number) => call<void>("transport_set_transpose", { semitones }),
+  saveTranspose: (songId: number, semitones: number) => call<void>("studio_save_transpose", { songId, semitones }),
   preloadSong: (songId: number | null) => call<void>("studio_preload_song", { songId }),
 
   // Song Editor

@@ -363,3 +363,47 @@ export function snapToBar(sec: number, bpm: number | null, downbeatSec: number, 
   const n = Math.round((sec - downbeatSec) / bar);
   return Math.max(0, downbeatSec + n * bar);
 }
+
+// ---- Key (tonalidad) and key changes -------------------------------------------
+
+const SHARPS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+const FLATS = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
+const NOTE_INDEX: Record<string, number> = Object.fromEntries([...SHARPS.map((n, i) => [n, i]), ...FLATS.map((n, i) => [n, i])]);
+
+/** Keys offered in the selectors (major, then minor). */
+export const KEY_OPTIONS = [...SHARPS, "Db", "Eb", "Gb", "Ab", "Bb"].sort((a, b) => NOTE_INDEX[a]! - NOTE_INDEX[b]! || a.length - b.length);
+export const ALL_KEY_OPTIONS = [...KEY_OPTIONS, ...KEY_OPTIONS.map((k) => `${k}m`)];
+
+/** Largest key change offered (semitones). */
+export const MAX_TRANSPOSE = 6;
+
+/**
+ * Name of a key moved by `semitones`: "D" +2 -> "E", "Bb" -1 -> "A", "F#m" +1 -> "Gm".
+ * Flat keys stay flat (Bb, Eb...), sharp ones sharp. "" if the key is unknown.
+ */
+export function transposeKey(key: string, semitones: number): string {
+  const m = /^([A-G](?:#|b)?)(m?)$/.exec(key.trim());
+  if (!m) return "";
+  const idx = NOTE_INDEX[m[1]!];
+  if (idx === undefined) return "";
+  const minor = m[2] === "m";
+  const n = (((idx + Math.round(semitones)) % 12) + 12) % 12;
+  // Flat spelling for flat keys and for the usual flat keys (F, Bb, Eb, Ab, Db / Dm, Gm, Cm, Fm).
+  const flatMajor = [5, 10, 3, 8, 1, 6];
+  const flatMinor = [2, 7, 0, 5, 10, 3];
+  const useFlats = m[1]!.includes("b") || (minor ? flatMinor.includes(n) : flatMajor.includes(n)) && !m[1]!.includes("#");
+  return (useFlats ? FLATS : SHARPS)[n]! + (minor ? "m" : "");
+}
+
+/** "+2", "−1", "0". */
+export function formatSemitones(n: number): string {
+  return n > 0 ? `+${n}` : n < 0 ? `−${Math.abs(n)}` : "0";
+}
+
+/** "D → E (+2)", "D", "+2" (unknown key), "" (nothing to say). */
+export function keyLabelFor(key: string, semitones: number): string {
+  if (!key) return semitones ? `${formatSemitones(semitones)} semitonos` : "";
+  if (!semitones) return key;
+  const to = transposeKey(key, semitones);
+  return to ? `${key} → ${to} (${formatSemitones(semitones)})` : `${key} (${formatSemitones(semitones)})`;
+}

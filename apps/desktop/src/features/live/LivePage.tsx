@@ -1,13 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Lock, LockOpen, Pause, Play, Radio, Repeat, RotateCcw, Save, SkipBack, Square, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Lock, LockOpen, Pause, Play, Radio, Repeat, RotateCcw, Save, SkipBack, Square, X } from "lucide-react";
+import { Arrange } from "@/features/studio/Arrange";
+import { TransposeControl } from "@/features/studio/TransposeControl";
 import { backend, isNativeAvailable } from "@/lib/ipc/client";
 import type { SetlistRecord, SetlistSummary } from "@/lib/ipc/types";
 import { Mixer } from "@/features/studio/Mixer";
-import { barBeat, dbToGain, formatBpm, formatTime, gainToDb, SECTION_COLORS } from "@/features/studio/model";
+import { barBeat, dbToGain, formatBpm, formatSemitones, formatTime, gainToDb, moveItem, SECTION_COLORS, transposeKey } from "@/features/studio/model";
 import { useStudio } from "@/features/studio/useStudio";
 import { formatDuration, formatEventDate, JUMP_MODES, jumpTime, keyLabel, type JumpMode } from "./model";
 import { livePosition, useShortcutKeys, useShortcutSettings, useSongView } from "./songView";
+
+/** "Tono E (+2)" / "Tono D" / "+2 st" for the setlist rows. */
+function itemKeyLabel(key: string, semitones: number): string {
+  if (!key) return semitones ? `${formatSemitones(semitones)} st` : "";
+  const to = transposeKey(key, semitones) || key;
+  return semitones ? `Tono ${to} (${formatSemitones(semitones)})` : `Tono ${key}`;
+}
 
 /** Big stage clock that moves smoothly between transport polls. */
 function Clock({ studio, bpm, downbeat, beats }: { studio: ReturnType<typeof useStudio>; bpm: number | null; downbeat: number; beats: number }) {
@@ -41,7 +50,27 @@ function Clock({ studio, bpm, downbeat, beats }: { studio: ReturnType<typeof use
 
 export function LivePage() {
   const native = isNativeAvailable();
-  const studio = useStudio({ persistMix: false });
+  // Key for the song about to load: the setlist's (null = the song's own).
+  const transposeRef = useRef<number | null>(null);
+  const studio = useStudio({ persistMix: false, persistTranspose: false, transposeOverride: transposeRef });
+  // The mixer can be folded to give the tracks more room; remembered on this computer.
+  const [mixerOpen, setMixerOpenState] = useState(() => {
+    try {
+      return localStorage.getItem("live.mixerOpen") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const setMixerOpen = (f: (open: boolean) => boolean) =>
+    setMixerOpenState((o) => {
+      const next = f(o);
+      try {
+        localStorage.setItem("live.mixerOpen", next ? "1" : "0");
+      } catch {
+        // storage unavailable: just not remembered
+      }
+      return next;
+    });
   const view = useSongView(studio);
   const { shortcuts } = useShortcutSettings();
   const { transport, song } = studio;
@@ -85,6 +114,7 @@ export function LivePage() {
       setConfirmSwitch(null);
       setCued(i);
       setPlayingIndex(i);
+      transposeRef.current = item.transpose;
       void studio.openSong(item.songId);
     },
     [items, studio],
@@ -130,6 +160,18 @@ export function LivePage() {
       return;
     }
     await backend.scheduleJump(at, target).catch(() => studio.seek(target));
+  };
+
+  /** Key change in Live: sounds at once and is kept for this song in this setlist. */
+  const changeKey = (n: number) => {
+    studio.setTranspose(n);
+    if (!setlist || playingIndex === null || !items[playingIndex]) return;
+    const songOwn = items[playingIndex].songTranspose;
+    const next: SetlistRecord = { ...setlist, items: setlist.items.map((it, j) => (j === playingIndex ? { ...it, transpose: n === songOwn ? null : n } : it)) };
+    setSetlist(next);
+    void backend
+      .saveSetlist(next.id, { name: next.name, eventDate: next.eventDate, place: next.place, notes: next.notes, items: next.items.map((it) => ({ songId: it.songId, notes: it.notes, transpose: it.transpose })) })
+      .catch(fail);
   };
 
   const toggleLoop = async () => {
@@ -285,7 +327,7 @@ export function LivePage() {
                       <span className="min-w-0 flex-1">
                         <span className={`block truncate text-base font-semibold ${isPlaying ? "text-go-400" : "text-ink-100"}`}>{it.title}</span>
                         <span className="block text-xs text-ink-400">
-                          {[it.songKey, it.targetBpm ?? it.originalBpm ? `${formatBpm((it.targetBpm ?? it.originalBpm)!)} BPM` : "", it.durationSec ? formatTime(it.durationSec, 0) : ""].filter(Boolean).join(" · ")}
+                          {[itemKeyLabel(it.songKey, it.transpose ?? it.songTranspose), it.targetBpm ?? it.originalBpm ? `${formatBpm((it.targetBpm ?? it.originalBpm)!)} BPM` : "", it.durationSec ? formatTime(it.durationSec, 0) : ""].filter(Boolean).join(" · ")}
                         </span>
                         {it.notes && <span className="mt-1 block text-xs text-live-400">{it.notes}</span>}
                       </span>
@@ -302,113 +344,139 @@ export function LivePage() {
 
           {/* Now playing */}
           <section className="flex min-w-0 flex-1 flex-col">
-            <div className="flex items-start gap-4 px-6 pt-4">
+            {/* Song, part now / next, key and clock */}
+            <div className="flex items-center gap-4 px-5 pt-3">
               <div className="min-w-0 flex-1">
-                <h2 className="truncate text-3xl font-bold" data-live-title>
+                <h2 className="truncate text-2xl font-bold" data-live-title>
                   {song && view.loaded ? song.title : loadingSong ? "Cargando…" : "Elige una canción del setlist"}
                 </h2>
                 {song && view.loaded && (
-                  <p className="mt-1 text-sm text-ink-300">
-                    {[song.artist, song.songKey ? `Tono ${song.songKey}` : "", view.bpm ? `${formatBpm(song.targetBpm ?? view.bpm)} BPM` : "", song.timeSignature].filter(Boolean).join(" · ")}
+                  <p className="truncate text-xs text-ink-300">
+                    {[song.artist, view.bpm ? `${formatBpm(song.targetBpm ?? view.bpm)} BPM` : "", song.timeSignature].filter(Boolean).join(" · ")}
+                    {song.notes && <span className="ml-2 text-live-400">{song.notes}</span>}
                   </p>
                 )}
-                {song?.notes && view.loaded && <p className="mt-2 text-sm text-live-400">{song.notes}</p>}
               </div>
+              <div className="flex items-center gap-3 rounded-xl border border-ink-800 bg-ink-950 px-4 py-1.5" style={{ borderLeft: `6px solid ${currentPart ? SECTION_COLORS[currentPart.kind] : "#333"}` }}>
+                <span className="text-[10px] uppercase tracking-wider text-ink-400">Ahora</span>
+                <span className="max-w-[10rem] truncate text-xl font-bold" data-live-part>
+                  {currentPart?.label ?? "—"}
+                </span>
+                <span className="text-ink-500">→</span>
+                <span className={`max-w-[10rem] truncate text-xl font-bold ${pending ? "animate-pulse text-live-400" : "text-ink-300"}`} data-live-next title={pending ? "Salto programado" : "Después"}>
+                  {pending ? sections.find((s) => Math.abs(s.startSec - pending.targetSec) < 0.01)?.label ?? formatTime(pending.targetSec, 0) : nextPart?.label ?? "Final"}
+                </span>
+              </div>
+              <TransposeControl large songKey={song?.songKey ?? ""} semitones={studio.transpose} disabled={!view.loaded || locked} onChange={changeKey} />
               <Clock studio={studio} bpm={view.bpm} downbeat={view.downbeat} beats={view.beats} />
             </div>
 
-            {/* Current and next part */}
-            <div className="grid grid-cols-2 gap-4 px-6 pt-3">
-              <div className="rounded-xl border border-ink-800 bg-ink-950 px-5 py-2" style={{ borderLeft: `6px solid ${currentPart ? SECTION_COLORS[currentPart.kind] : "#333"}` }}>
-                <span className="text-xs uppercase tracking-wider text-ink-400">Ahora</span>
-                <span className="block truncate text-2xl font-bold" data-live-part>
-                  {currentPart?.label ?? "—"}
-                </span>
-              </div>
-              <div className="rounded-xl border border-ink-800 bg-ink-950 px-5 py-2">
-                <span className="text-xs uppercase tracking-wider text-ink-400">{pending ? "Salto programado" : "Después"}</span>
-                <span className={`block truncate text-2xl font-bold ${pending ? "animate-pulse text-live-400" : "text-ink-300"}`} data-live-next>
-                  {pending ? `→ ${sections.find((s) => Math.abs(s.startSec - pending.targetSec) < 0.01)?.label ?? formatTime(pending.targetSec, 0)}` : nextPart?.label ?? "Final"}
-                </span>
-              </div>
-            </div>
-
-            {/* Parts: click = jump (bar-synchronous by default) */}
-            <div className="flex gap-2 overflow-x-auto px-6 pb-1 pt-3" aria-label="Partes de la canción">
-              {sections.map((s, i) => {
-                const isCurrent = i === view.current;
-                const isTarget = !!pending && Math.abs(pending.targetSec - s.startSec) < 0.01;
-                return (
-                  <button
-                    key={`${s.startSec}-${i}`}
-                    type="button"
-                    data-live-jump={s.label}
-                    onClick={() => void jumpTo(s.startSec)}
-                    className={`min-w-[104px] shrink-0 rounded-lg border-2 px-4 py-2 text-left text-base font-bold transition-colors ${
-                      isTarget ? "animate-pulse border-live-400 bg-live-500/20" : isCurrent ? "border-white bg-white/10" : "border-transparent bg-ink-900 hover:bg-ink-850"
-                    }`}
-                    style={{ borderBottom: `4px solid ${SECTION_COLORS[s.kind]}` }}
-                  >
-                    {s.label}
-                    <span className="block font-mono text-[10px] font-normal text-ink-400">{formatTime(s.startSec, 0)}</span>
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Transport */}
-            <div className="flex items-center gap-3 px-6 py-3">
-              <button type="button" aria-label="Al principio" onClick={() => studio.seek(0)} disabled={!view.loaded} className="rounded-xl bg-ink-900 p-4 text-ink-100 hover:bg-ink-850 disabled:opacity-40">
-                <SkipBack size={26} />
+            {/* Transport + parts (click = jump, bar-synchronous by default) */}
+            <div className="flex items-center gap-2 px-5 py-2">
+              <button type="button" aria-label="Al principio" onClick={() => studio.seek(0)} disabled={!view.loaded} className="rounded-xl bg-ink-900 p-3 text-ink-100 hover:bg-ink-850 disabled:opacity-40">
+                <SkipBack size={22} />
               </button>
               <button
                 type="button"
                 aria-label={playing ? "Pausar" : "Reproducir"}
                 onClick={() => studio.togglePlay()}
                 disabled={!view.loaded}
-                className={`rounded-2xl px-10 py-4 text-white disabled:opacity-40 ${playing ? "bg-info-500 hover:bg-info-400" : "bg-go-500 hover:bg-go-400"}`}
+                className={`rounded-2xl px-8 py-3 text-white disabled:opacity-40 ${playing ? "bg-info-500 hover:bg-info-400" : "bg-go-500 hover:bg-go-400"}`}
               >
-                {playing ? <Pause size={34} /> : <Play size={34} />}
+                {playing ? <Pause size={28} /> : <Play size={28} />}
               </button>
               <button
                 type="button"
                 aria-label="Detener"
                 onClick={stop}
                 disabled={!view.loaded || locked}
-                className={`rounded-xl p-4 disabled:opacity-40 ${confirmStop ? "bg-stop-500 text-white" : "bg-ink-900 text-ink-100 hover:bg-ink-850"}`}
+                className={`rounded-xl p-3 disabled:opacity-40 ${confirmStop ? "bg-stop-500 text-white" : "bg-ink-900 text-ink-100 hover:bg-ink-850"}`}
+                title={confirmStop ? "Pulsa otra vez para detener · Esc cancela" : "Detener"}
               >
-                <Square size={26} />
+                <Square size={22} />
               </button>
-              {confirmStop && <span className="text-sm text-stop-500">Pulsa otra vez para detener · Esc cancela</span>}
               <button
                 type="button"
                 aria-pressed={loopingCurrent}
                 aria-label="Repetir la parte"
                 onClick={() => void toggleLoop()}
                 disabled={!currentPart}
-                className={`ml-4 flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold disabled:opacity-40 ${loopingCurrent ? "bg-live-500 text-black" : "bg-ink-900 text-ink-100 hover:bg-ink-850"}`}
+                title={`Repetir la parte actual (${keyLabel(shortcuts.loopPart)})`}
+                className={`flex items-center gap-1.5 rounded-xl px-3 py-3 text-sm font-semibold disabled:opacity-40 ${loopingCurrent ? "bg-live-500 text-black" : "bg-ink-900 text-ink-100 hover:bg-ink-850"}`}
               >
-                <Repeat size={18} /> {loopingCurrent ? `Repitiendo ${currentPart?.label}` : "Repetir parte"}
+                <Repeat size={16} /> {loopingCurrent ? "Repitiendo" : "Bucle"}
               </button>
               {(pending || loop) && (
-                <button type="button" onClick={() => void cancel()} className="rounded-xl border border-ink-700 px-3 py-3 text-sm text-ink-200 hover:border-ink-500">
+                <button type="button" onClick={() => void cancel()} className="rounded-xl border border-ink-700 px-3 py-3 text-xs text-ink-200 hover:border-ink-500">
                   Cancelar {pending ? "salto" : "bucle"} ({keyLabel(shortcuts.cancelJump)})
                 </button>
               )}
-              <span className="ml-auto text-[11px] text-ink-400">
-                {keyLabel(shortcuts.playPause)} reproducir · {keyLabel(shortcuts.prevPart)} {keyLabel(shortcuts.nextPart)} partes · {keyLabel(shortcuts.loopPart)} bucle
-              </span>
+              <div className="ml-2 flex min-w-0 flex-1 gap-2 overflow-x-auto pb-1" aria-label="Partes de la canción">
+                {sections.map((s, i) => {
+                  const isCurrent = i === view.current;
+                  const isTarget = !!pending && Math.abs(pending.targetSec - s.startSec) < 0.01;
+                  return (
+                    <button
+                      key={`${s.startSec}-${i}`}
+                      type="button"
+                      data-live-jump={s.label}
+                      onClick={() => void jumpTo(s.startSec)}
+                      className={`min-w-[92px] shrink-0 rounded-lg border-2 px-3 py-1.5 text-left text-sm font-bold transition-colors ${
+                        isTarget ? "animate-pulse border-live-400 bg-live-500/20" : isCurrent ? "border-white bg-white/10" : "border-transparent bg-ink-900 hover:bg-ink-850"
+                      }`}
+                      style={{ borderBottom: `4px solid ${SECTION_COLORS[s.kind]}` }}
+                    >
+                      {s.label}
+                      <span className="block font-mono text-[10px] font-normal text-ink-400">{formatTime(s.startSec, 0)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            {confirmStop && <p className="px-5 pb-1 text-xs text-stop-500">Pulsa otra vez «Detener» para parar · Esc cancela</p>}
+
+            {/* Tracks, like in Multitrack Studio */}
+            <div className={`min-h-0 flex-1 border-t border-ink-800 ${locked ? "pointer-events-none" : ""}`} data-live-tracks>
+              {view.loaded && song ? (
+                <Arrange
+                  durationSec={view.durationSec}
+                  tracks={view.tracks}
+                  peaks={studio.peaks?.loadId === studio.status?.engine.loadId ? (studio.peaks?.tracks ?? null) : null}
+                  sections={sections}
+                  bpm={view.bpm}
+                  beatsPerBar={view.beats}
+                  downbeatSec={view.downbeat}
+                  transport={transport}
+                  transportAt={studio.transportAt}
+                  meters={studio.meters}
+                  mute={studio.mixer.mute}
+                  solo={studio.mixer.solo}
+                  editing={false}
+                  selected={view.current}
+                  onSeek={studio.seek}
+                  onSectionClick={(i) => void jumpTo(sections[i]?.startSec ?? 0)}
+                  onSectionMove={() => {}}
+                  onMute={studio.toggleMute}
+                  onSolo={studio.toggleSolo}
+                  onReorder={(from, to) => studio.reorderTracks(moveItem(view.tracks, from, to).map((t) => t.index))}
+                />
+              ) : (
+                <p className="p-6 text-sm text-ink-400">{loadingSong ? `Cargando… ${Math.round((studio.status?.engine.progress ?? 0) * 100)} %` : "Las pistas aparecen al abrir una canción."}</p>
+              )}
             </div>
 
-            {/* Mixer: changes are for this moment unless saved */}
-            <div className={`mt-auto flex min-h-0 flex-col border-t border-ink-800 ${locked ? "pointer-events-none opacity-60" : ""}`} style={{ height: 346 }} aria-disabled={locked}>
-              <div className="flex h-7 shrink-0 items-center justify-end gap-2 bg-ink-950 px-3">
-                {studio.mixDirty && <span className="text-xs text-live-400">Mezcla cambiada solo para ahora</span>}
+            {/* Mixer (collapsible): changes are for this moment unless saved */}
+            <div className={`flex shrink-0 flex-col border-t-2 border-ink-700 ${locked ? "pointer-events-none opacity-60" : ""}`} style={{ height: mixerOpen ? 346 : 30 }} aria-disabled={locked}>
+              <div className="flex h-[30px] shrink-0 items-center gap-2 bg-ink-950 px-3">
+                <button type="button" onClick={() => setMixerOpen((o) => !o)} aria-expanded={mixerOpen} className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-ink-300 hover:text-ink-100">
+                  {mixerOpen ? <ChevronDown size={14} /> : <ChevronUp size={14} />} Mezclador
+                </button>
+                {studio.mixDirty && <span className="ml-auto text-xs text-live-400">Mezcla cambiada solo para ahora</span>}
                 <button
                   type="button"
                   disabled={!studio.mixDirty}
                   onClick={() => studio.restoreMix()}
-                  className="flex items-center gap-1 rounded-md border border-ink-700 bg-ink-950 px-2 py-1 text-xs text-ink-200 hover:border-ink-500 disabled:opacity-40"
+                  className={`flex items-center gap-1 rounded-md border border-ink-700 bg-ink-950 px-2 py-1 text-xs text-ink-200 hover:border-ink-500 disabled:opacity-40 ${studio.mixDirty ? "" : "ml-auto"}`}
                 >
                   <RotateCcw size={12} /> Volver a la guardada
                 </button>
@@ -421,28 +489,30 @@ export function LivePage() {
                   <Save size={12} /> Guardar mezcla
                 </button>
               </div>
-              <div className="min-h-0 flex-1">
-              {view.loaded ? (
-                <Mixer
-                  tracks={view.mixerTracks}
-                  volumesDb={studio.mixer.volumesDb}
-                  mute={studio.mixer.mute}
-                  solo={studio.mixer.solo}
-                  meters={studio.meters}
-                  masterDb={gainToDb(mainGain)}
-                  monitorDb={gainToDb(monitorGain)}
-                  limiting={{ main: (transport?.mainLimiterGain ?? 1) < 0.999, monitor: (transport?.monitorLimiterGain ?? 1) < 0.999 }}
-                  onVolume={studio.setTrackVolume}
-                  onMute={studio.toggleMute}
-                  onSolo={studio.toggleSolo}
-                  onMaster={(db) => studio.setOutput({ mode: outputMode, monitorGain, mainGain: dbToGain(db) })}
-                  onMonitor={(db) => studio.setOutput({ mode: outputMode, monitorGain: dbToGain(db), mainGain })}
-                  onReorder={view.reorderMixer}
-                />
-              ) : (
-                <p className="p-6 text-sm text-ink-400">El mezclador aparece al abrir una canción.</p>
+              {mixerOpen && (
+                <div className="min-h-0 flex-1">
+                  {view.loaded ? (
+                    <Mixer
+                      tracks={view.mixerTracks}
+                      volumesDb={studio.mixer.volumesDb}
+                      mute={studio.mixer.mute}
+                      solo={studio.mixer.solo}
+                      meters={studio.meters}
+                      masterDb={gainToDb(mainGain)}
+                      monitorDb={gainToDb(monitorGain)}
+                      limiting={{ main: (transport?.mainLimiterGain ?? 1) < 0.999, monitor: (transport?.monitorLimiterGain ?? 1) < 0.999 }}
+                      onVolume={studio.setTrackVolume}
+                      onMute={studio.toggleMute}
+                      onSolo={studio.toggleSolo}
+                      onMaster={(db) => studio.setOutput({ mode: outputMode, monitorGain, mainGain: dbToGain(db) })}
+                      onMonitor={(db) => studio.setOutput({ mode: outputMode, monitorGain: dbToGain(db), mainGain })}
+                      onReorder={view.reorderMixer}
+                    />
+                  ) : (
+                    <p className="p-6 text-sm text-ink-400">El mezclador aparece al abrir una canción.</p>
+                  )}
+                </div>
               )}
-              </div>
             </div>
           </section>
         </div>

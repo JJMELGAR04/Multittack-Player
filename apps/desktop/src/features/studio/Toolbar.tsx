@@ -1,19 +1,21 @@
-import { FolderOpen, Headphones, ListMusic, Pause, Play, RotateCcw, SkipBack, Speaker, SplitSquareHorizontal, Square } from "lucide-react";
-import type { OutputInfo, OutputMode, SongRecord, SongSummary, TimeSignature, TransportState } from "@/lib/ipc/types";
+import { Headphones, Pause, Play, RotateCcw, SkipBack, Speaker, SplitSquareHorizontal, Square } from "lucide-react";
+import type { OutputInfo, OutputMode, SongRecord, TimeSignature, TransportState } from "@/lib/ipc/types";
+import { SongPicker } from "@/features/songs/SongPicker";
 import { barBeat, formatBpm, formatPercent, TIME_SIGNATURES } from "./model";
+import { TransposeControl } from "./TransposeControl";
 
 interface Props {
   native: boolean;
   song: SongRecord | null;
-  recent: SongSummary[];
   transport: TransportState | null;
   output: OutputInfo | null;
   outputMode: OutputMode;
   ratio: number;
   beatsPerBar: number;
   ready: boolean;
-  onOpen: () => void;
-  onOpenRecent: (id: number) => void;
+  onPickSong: (id: number) => void;
+  transpose: number;
+  onTranspose: (semitones: number) => void;
   onMeter: (ts: TimeSignature) => void;
   onPlay: () => void;
   onPause: () => void;
@@ -30,9 +32,9 @@ function clock(sec: number): string {
 }
 
 const OUTPUTS: { mode: OutputMode; label: string; short: string; icon: typeof Speaker; needs: number; hint: string }[] = [
-  { mode: "stereo", label: "Ensayo", short: "Ensayo", icon: Headphones, needs: 1, hint: "Todo junto por 1-2 (audífonos, ensayo)" },
-  { mode: "split", label: "En vivo · 2 salidas", short: "Vivo 2", icon: SplitSquareHorizontal, needs: 2, hint: "Salida 1: instrumentos → PA · Salida 2: click y cues → banda" },
-  { mode: "quad", label: "En vivo · 4 salidas", short: "Vivo 4", icon: Speaker, needs: 4, hint: "1-2: instrumentos → PA · 3-4: click y cues → banda" },
+  { mode: "stereo", label: "Ensayo", short: "Ensayo", icon: Headphones, needs: 1, hint: "Ensayo: todo junto en estéreo (audífonos)" },
+  { mode: "split", label: "En vivo · 2 salidas", short: "Vivo 2", icon: SplitSquareHorizontal, needs: 2, hint: "En vivo · 2 salidas: banda por una, click y cues por otra (se eligen en Audio Settings)" },
+  { mode: "quad", label: "En vivo · 4 salidas", short: "Vivo 4", icon: Speaker, needs: 4, hint: "En vivo · 4 salidas: banda en estéreo por un par, click y cues por otro" },
 ];
 
 export function Toolbar(p: Props) {
@@ -45,42 +47,14 @@ export function Toolbar(p: Props) {
   const btn = "flex h-11 w-11 items-center justify-center rounded-lg bg-ink-800 text-ink-100 hover:bg-ink-700 disabled:opacity-40";
 
   return (
-    <div className="flex h-16 shrink-0 items-center gap-4 border-b border-ink-800 bg-gradient-to-b from-ink-850 to-ink-900 px-3">
+    <div className="flex h-16 shrink-0 items-center gap-3 border-b border-ink-800 bg-gradient-to-b from-ink-850 to-ink-900 px-3">
       {/* Song */}
-      <div className="flex min-w-0 items-center gap-2">
-        <button
-          type="button"
-          onClick={p.onOpen}
-          disabled={!p.native}
-          className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-info-500 px-3 text-sm font-semibold text-white hover:bg-info-400 disabled:opacity-40"
-          title="Abrir un zip, una carpeta o pistas"
-        >
-          <FolderOpen size={16} /> <span className="hidden 2xl:inline">Abrir pistas</span><span className="2xl:hidden sr-only">Abrir pistas</span>
-        </button>
-        {p.recent.length > 0 && (
-          <label className="flex items-center" title="Canciones recientes">
-            <ListMusic size={16} className="mr-1 text-ink-400" />
-            <select
-              aria-label="Canciones recientes"
-              value=""
-              onChange={(e) => e.target.value && p.onOpenRecent(Number(e.target.value))}
-              className="w-28 rounded-md border border-ink-700 bg-ink-850 px-2 py-1.5 text-xs text-ink-100"
-            >
-              <option value="">Recientes…</option>
-              {p.recent.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.title}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        <div className="min-w-0 pl-1">
-          <h1 className="text-[11px] font-semibold uppercase tracking-wider text-ink-400">Multitrack Studio</h1>
+      <div className="flex shrink-0 items-center gap-2">
+        <SongPicker disabled={!p.native} current={p.song?.title} onPick={p.onPickSong} />
+        <div className="min-w-0">
+          {/* The open song is shown in the search box. */}
+          <h1 className="sr-only">Multitrack Studio</h1>
           <div className="flex items-center gap-2">
-            <span className="max-w-40 truncate text-sm font-bold text-ink-100" title={p.song?.title}>
-              {p.song?.title ?? "Sin canción"}
-            </span>
             {p.song && (
               <select
                 aria-label="Compás de la canción"
@@ -130,18 +104,20 @@ export function Toolbar(p: Props) {
 
       {/* Tempo */}
       <div className="flex items-center gap-1.5 rounded-lg border border-ink-800 bg-ink-950/60 px-2 py-1">
-        <span className="text-[10px] uppercase tracking-wider text-ink-400">Tempo</span>
+        <span className="hidden text-[10px] uppercase tracking-wider text-ink-400 2xl:inline">Tempo</span>
         <button type="button" disabled={!target} onClick={() => target && p.onTargetBpm(target - 1)} aria-label="Bajar 1 BPM"
           className="h-7 w-7 rounded bg-ink-800 text-sm text-ink-100 hover:bg-ink-700 disabled:opacity-40">−</button>
         <span className="w-12 text-center font-mono text-base text-ink-100">{target ? formatBpm(target) : "—"}</span>
         <button type="button" disabled={!target} onClick={() => target && p.onTargetBpm(target + 1)} aria-label="Subir 1 BPM"
           className="h-7 w-7 rounded bg-ink-800 text-sm text-ink-100 hover:bg-ink-700 disabled:opacity-40">+</button>
-        <span className={`w-12 text-center font-mono text-xs ${p.ratio === 1 ? "text-ink-400" : "text-live-400"}`}>{formatPercent(p.ratio)}</span>
+        <span className={`hidden w-12 text-center font-mono text-xs 2xl:inline ${p.ratio === 1 ? "text-ink-400" : "text-live-400"}`}>{formatPercent(p.ratio)}</span>
         <button type="button" disabled={p.ratio === 1} onClick={() => p.onTargetBpm(null)} title="Volver al tempo original"
           className="flex h-7 items-center gap-1 rounded bg-ink-800 px-2 text-xs text-ink-200 hover:bg-ink-700 disabled:opacity-40">
-          <RotateCcw size={11} /> Original
+          <RotateCcw size={11} /> <span className="hidden 2xl:inline">Original</span>
         </button>
       </div>
+
+      <TransposeControl songKey={p.song?.songKey ?? ""} semitones={p.transpose} disabled={!p.ready} onChange={p.onTranspose} />
 
       {/* Outputs + engine */}
       <div className="ml-auto flex shrink-0 items-center gap-3">
@@ -165,7 +141,7 @@ export function Toolbar(p: Props) {
               >
                 <Icon size={14} />
                 <span className="hidden 2xl:inline">{o.label}</span>
-                <span className="2xl:hidden">{o.short}</span>
+
                 <span className="sr-only 2xl:hidden">{o.label}</span>
               </button>
             );

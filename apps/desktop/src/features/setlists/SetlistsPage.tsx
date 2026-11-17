@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { CalendarDays, Copy, GripVertical, ListMusic, Plus, Radio, Search, Trash2, X } from "lucide-react";
 import { backend, isNativeAvailable } from "@/lib/ipc/client";
 import type { LibrarySong, SetlistInput, SetlistRecord, SetlistSummary } from "@/lib/ipc/types";
-import { formatBpm, formatTime, moveItem } from "@/features/studio/model";
+import { formatBpm, formatSemitones, formatTime, MAX_TRANSPOSE, moveItem, transposeKey } from "@/features/studio/model";
 import { filterSongs } from "@/features/songs/SongsPage";
 import { formatDuration, formatEventDate } from "@/features/live/model";
 
@@ -13,6 +13,8 @@ interface Row {
   key: string;
   songId: number;
   notes: string;
+  /** Key for this setlist (null = the song's own). */
+  transpose: number | null;
 }
 
 let rowSeq = 0;
@@ -57,7 +59,7 @@ export function SetlistsPage() {
       eventDate: rec.eventDate,
       place: rec.place,
       notes: rec.notes,
-      rows: rec.items.map((i) => ({ key: newKey(), songId: i.songId, notes: i.notes })),
+      rows: rec.items.map((i) => ({ key: newKey(), songId: i.songId, notes: i.notes, transpose: i.transpose })),
     });
     setSaved("saved");
   }, []);
@@ -80,7 +82,7 @@ export function SetlistsPage() {
         eventDate: next.eventDate,
         place: next.place,
         notes: next.notes,
-        items: next.rows.map((r) => ({ songId: r.songId, notes: r.notes })),
+        items: next.rows.map((r) => ({ songId: r.songId, notes: r.notes, transpose: r.transpose })),
       };
       backend.saveSetlist(id, input).then(
         () => {
@@ -258,13 +260,27 @@ export function SetlistsPage() {
                           {[s?.artist, s?.songKey, s && (s.targetBpm ?? s.originalBpm) ? `${formatBpm((s.targetBpm ?? s.originalBpm)!)} BPM` : "", s?.durationSec ? formatTime(s.durationSec, 0) : ""].filter(Boolean).join(" · ")}
                         </span>
                       </span>
+                      <select
+                        aria-label={`Tono de ${s?.title ?? "la canción"}`}
+                        value={r.transpose === null ? "song" : String(r.transpose)}
+                        onChange={(e) => update({ ...draft, rows: draft.rows.map((x, j) => (j === i ? { ...x, transpose: e.target.value === "song" ? null : Number(e.target.value) } : x)) })}
+                        className={`${field} w-36`}
+                        title="Tono para este setlist"
+                      >
+                        <option value="song">Tono: {s?.songKey ? transposeKey(s.songKey, s.transpose) || s.songKey : "como la canción"}{s?.transpose ? ` (${formatSemitones(s.transpose)})` : ""}</option>
+                        {Array.from({ length: 2 * MAX_TRANSPOSE + 1 }, (_, k) => k - MAX_TRANSPOSE).map((n) => (
+                          <option key={n} value={n}>
+                            {s?.songKey ? `${transposeKey(s.songKey, n) || s.songKey} (${formatSemitones(n)})` : `${formatSemitones(n)} semitonos`}
+                          </option>
+                        ))}
+                      </select>
                       <input
                         aria-label={`Notas de ${s?.title ?? "la canción"}`}
                         value={r.notes}
                         maxLength={1000}
                         placeholder="Notas (p. ej. coro x2)"
                         onChange={(e) => update({ ...draft, rows: draft.rows.map((x, j) => (j === i ? { ...x, notes: e.target.value } : x)) })}
-                        className={`${field} w-56`}
+                        className={`${field} w-48`}
                       />
                       <button type="button" aria-label={`Quitar ${s?.title ?? "canción"} del setlist`} onClick={() => update({ ...draft, rows: draft.rows.filter((_, j) => j !== i) })} className="rounded p-1.5 text-ink-400 hover:bg-stop-500/15 hover:text-stop-500">
                         <X size={15} />
@@ -292,7 +308,7 @@ export function SetlistsPage() {
                     <button
                       type="button"
                       aria-label={`Agregar ${s.title}`}
-                      onClick={() => update({ ...draft, rows: [...draft.rows, { key: newKey(), songId: s.id, notes: "" }] })}
+                      onClick={() => update({ ...draft, rows: [...draft.rows, { key: newKey(), songId: s.id, notes: "", transpose: null }] })}
                       className="rounded-md bg-go-500/15 p-1.5 text-go-400 hover:bg-go-500/25"
                     >
                       <Plus size={15} />

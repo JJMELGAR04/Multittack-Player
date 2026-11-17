@@ -70,7 +70,7 @@ try {
   const text = await evaluate("document.body.innerText");
   check("isTauri() true (no 'fuera de la aplicación' banner)", !text.includes("fuera de la aplicación de escritorio"));
   check("engine_info: JUCE 9.0.5", text.includes("9.0.5"));
-  check("engine_info: ABI v6", text.includes("v6"));
+  check("engine_info: ABI v7", text.includes("v7"));
   check("audio_diagnostics: Windows Audio listed", text.includes("Windows Audio"));
   check("database_status: songs tables (schema 2)", text.includes("songs") && text.includes("song_sections"));
   check("app_info: windows", text.includes("windows"));
@@ -228,6 +228,9 @@ try {
 
   // ---- Zip import with review dialog ----
   await invoke("studio_set_output", { settings: { mode: "stereo", monitorGain: 0, mainGain: 0 } }); // silent click bus too
+  await evaluate(`location.hash = "#/songs"`);
+  await waitFor(`!!window.__LIVEPLAYER_TEST__?.startImport && document.querySelector("h1")?.textContent === "Songs"`, "songs page import");
+  check("Studio has no import button any more (a song search box instead)", true);
   await evaluate(`window.__LIVEPLAYER_TEST__.startImport([${JSON.stringify(songZip)}])`);
   await waitFor(`!!document.querySelector("[role=dialog]")`, "import dialog");
   const dialogText = await evaluate(`document.querySelector("[role=dialog]").innerText`);
@@ -243,13 +246,21 @@ try {
   await clickButton("Detener llmmD.wav");
   await evaluate(`(() => { const sel = document.querySelector("[aria-label='Qué es llmmD.wav']"); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(sel, "drums"); sel.dispatchEvent(new Event("change", { bubbles: true })); })()`);
   check("identified file takes the instrument name", (await evaluate(`document.querySelector("[aria-label='Nombre de llmmD.wav']").value`)) === "Batería");
-  await evaluate(`[...document.querySelectorAll("button")].find(b => b.textContent.trim() === "Guardar canción").click()`);
+  await evaluate(`(() => { const sel = document.querySelector("[aria-label='Tono original']"); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(sel, "D"); sel.dispatchEvent(new Event("change", { bubbles: true })); })()`);
+  // Double click on "Guardar canción": the song must be saved only once.
+  await evaluate(`(() => { const b = [...document.querySelectorAll("button")].find(b => b.textContent.trim() === "Guardar canción"); b.click(); b.click(); })()`);
   await waitFor(`!document.querySelector("[role=dialog]")`, "dialog closed");
+  await waitFor(`!!document.querySelector("[data-imported]")`, "imported banner");
+  const libAfterImport = await invoke("library_songs");
+  check("double click on Guardar: the song is imported only once", libAfterImport.filter((x) => x.title === "Prueba").length === 1, libAfterImport.map((x) => x.title).join(", "));
+  await evaluate(`[...document.querySelectorAll("button")].find(b => b.textContent.includes("Escucharla en Multitrack Studio")).click()`);
+  await waitFor(`location.hash.startsWith("#/studio")`, "studio after import");
   await waitFor(`document.querySelectorAll("[data-section]").length >= 6`, "zip song sections", 120); // the analysis can take longer on a busy machine
   await sleep(800);
   const st2 = await invoke("studio_status");
   const zipSong = await invoke("studio_get_song", { songId: st2.songId });
   const drums = zipSong.tracks.find((tr) => tr.filePath.endsWith("llmmD.wav"));
+  check("the key asked at import is saved (D)", zipSong.songKey === "D", zipSong.songKey);
   check("saved: title, BPM (user), 4/4, roles", zipSong.title === "Prueba" && zipSong.originalBpm === 96 && zipSong.bpmSource === "user" && zipSong.timeSignature === "4/4" && drums?.name === "Batería" && drums?.role === "drums" && drums?.bus === "main");
   const zipLabels = await evaluate(`[...document.querySelectorAll("[data-section]")].map(b => b.dataset.section).join(", ")`);
   check("sections found with the given BPM", zipLabels === "Intro, Estrofa 1, Coro 1, Estrofa 2, Coro 2, Puente, Coro 3, Final", zipLabels);
@@ -266,10 +277,14 @@ try {
   await evaluate(`[...document.querySelectorAll("[role=radio]")].find(b => b.textContent.includes("Ensayo")).click()`);
 
   // Re-importing the same zip opens the saved song directly.
+  await evaluate(`location.hash = "#/songs"`);
+  await waitFor(`!!window.__LIVEPLAYER_TEST__?.startImport && document.querySelector("h1")?.textContent === "Songs"`, "songs page again");
   await evaluate(`window.__LIVEPLAYER_TEST__.startImport([${JSON.stringify(songZip)}])`);
   await sleep(1500);
   const st3 = await invoke("studio_status");
-  check("same zip again: opens the saved song, no duplicate", st3.songId === st2.songId && !(await evaluate(`!!document.querySelector("[role=dialog]")`)));
+  check("same zip again: opens the saved song, no duplicate", st3.songId === st2.songId && !(await evaluate(`!!document.querySelector("[role=dialog]")`)) && (await invoke("library_songs")).filter((x) => x.title === "Prueba").length === 1);
+  await evaluate(`location.hash = "#/studio"`);
+  await waitFor(`document.querySelector("h1")?.textContent === "Multitrack Studio"`, "studio again");
 
   // ---- Phase 3: mixer saved per song ----
   const typeDb = async (name, value) => {
@@ -427,8 +442,38 @@ try {
     check("new sample rate: skipped (this device offers no other rate)", true, JSON.stringify(caps.sampleRates));
   }
 
-  // ---- Phase 5: Song Editor ----
+  // ---- Phase 5: Studio song search and key change ----
   await invoke("studio_set_output", { settings: { mode: "stereo", monitorGain: 0, mainGain: 0 } }); // silent
+  await evaluate(`location.hash = "#/studio"`);
+  await waitFor(`!!document.querySelector("[aria-label='Buscar canción para abrir']")`, "studio search box");
+  await evaluate(`(() => { const i = document.querySelector("[aria-label='Buscar canción para abrir']"); i.focus(); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(i, "son"); i.dispatchEvent(new Event("input", { bubbles: true })); })()`);
+  await waitFor(`!!document.querySelector("[data-pick-song='song']")`, "search results");
+  await evaluate(`document.querySelector("[data-pick-song='song']").click()`);
+  for (let i = 0; i < 100; i++) {
+    const st = await invoke("studio_status");
+    if (st.songId === folderSong.id && st.engine.state === "ready") break;
+    await sleep(100);
+  }
+  await waitFor(`!!document.querySelector("[aria-label='Subir medio tono']") && !document.querySelector("[aria-label='Subir medio tono']").disabled`, "key control");
+  check("Studio: find a song with the search box and open it", (await invoke("studio_status")).songId === folderSong.id);
+  await clickButton("Subir medio tono");
+  await clickButton("Subir medio tono");
+  await sleep(500);
+  let tk = await transport();
+  const savedKey = (await invoke("studio_get_song", { songId: folderSong.id })).transpose;
+  check("Studio: key up 2 semitones (engine + saved with the song)", tk.transpose === 2 && savedKey === 2, `engine ${tk.transpose}, saved ${savedKey}`);
+  await clickButton("Reproducir");
+  await sleep(1500);
+  tk = await transport();
+  check("playing transposed: no dropouts", tk.playState === "playing" && tk.underruns === 0 && tk.stretching, `render ${Math.round(tk.renderLoad * 100)} %`);
+  await shot("14-studio-key");
+  await invoke("transport_stop");
+  await clickButton("Volver al tono original");
+  await sleep(500);
+  tk = await transport();
+  check("back to the original key: untouched audio again", tk.transpose === 0 && (await invoke("studio_get_song", { songId: folderSong.id })).transpose === 0);
+
+  // ---- Phase 5: Song Editor ----
   const key = (k, extra = {}) => evaluate(`window.dispatchEvent(new KeyboardEvent("keydown", ${JSON.stringify({ key: k, code: k === " " ? "Space" : "Key" + k.toUpperCase(), bubbles: true, ...extra })}))`);
   const drag = async (selector, dx, dy = 0) => {
     await evaluate(`(() => {
@@ -531,6 +576,16 @@ try {
   await waitFor(`document.querySelector("[data-live-title]")?.textContent === "song"`, "live song loaded");
   await waitFor(`document.querySelector("[data-preload]")?.dataset.preload === "ready"`, "next song preloaded");
   check("Live: open a song from the setlist; the next one is prepared in the background", true);
+  await waitFor(`document.querySelectorAll("[data-live-tracks] canvas").length >= 5`, "live tracks");
+  check("Live: the tracks are on screen like in Multitrack Studio", true);
+  await clickButton("Subir medio tono");
+  await sleep(500);
+  const liveKey = (await transport()).transpose;
+  const keyList = await invoke("setlist_get", { id: e2eList.id });
+  const keyLabelShown = await evaluate(`document.querySelector("[data-sounding-key]")?.textContent`);
+  check("Live: key up half a tone, kept for this song in this setlist", liveKey === 1 && keyList.items[0].transpose === 1 && keyLabelShown === "Eb", `engine ${liveKey}, setlist ${keyList.items[0].transpose}, shows ${keyLabelShown}`);
+  await clickButton("Bajar medio tono");
+  await sleep(300);
   const liveSong = await invoke("studio_get_song", { songId: folderSong.id });
   await clickButton("Reproducir");
   await sleep(700);

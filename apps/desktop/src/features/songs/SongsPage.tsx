@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { FileArchive, Folder, Music, Pencil, PencilRuler, Play, Plus, Search, Trash2 } from "lucide-react";
 import { backend, isNativeAvailable } from "@/lib/ipc/client";
 import type { LibrarySong } from "@/lib/ipc/types";
 import { formatBpm, formatTime } from "@/features/studio/model";
+import { ImportDialog } from "@/features/studio/ImportDialog";
+import { useStudio } from "@/features/studio/useStudio";
+import { pickSongFiles, useFileDrop } from "./importFiles";
 
 type SortKey = "title" | "recent" | "added" | "bpm" | "duration";
 
@@ -91,6 +94,52 @@ export function SongsPage() {
   }, [native]);
   useEffect(reload, [reload]);
 
+  // ---- Import (zip / folder / files) with the review dialog ----
+  const studio = useStudio();
+  const [imported, setImported] = useState<{ id: number; title: string } | null>(null);
+  const importing = !!studio.importDraft;
+  const startImport = useCallback(
+    async (paths: string[]) => {
+      setImported(null);
+      await studio.startImport(paths);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [studio.startImport],
+  );
+  const pickAndImport = async () => {
+    try {
+      const paths = await pickSongFiles();
+      if (paths) await startImport(paths);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+  const hovering = useFileDrop(startImport, native && !importing);
+  // The dialog closed after saving: refresh the list and offer to open it.
+  const wasImporting = useRef(false);
+  useEffect(() => {
+    if (wasImporting.current && !importing) {
+      reload();
+      if (studio.song) setImported({ id: studio.song.id, title: studio.song.title });
+    }
+    wasImporting.current = importing;
+  }, [importing, studio.song, reload]);
+  // /songs?import=1 opens the picker; debug builds expose the import to the E2E test.
+  const [params, setParams] = useSearchParams();
+  useEffect(() => {
+    if (!params.get("import") || !native) return;
+    setParams({}, { replace: true });
+    void pickAndImport();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params]);
+  useEffect(() => {
+    const env = (import.meta as unknown as { env: Record<string, string | undefined> }).env;
+    if (!env.TAURI_ENV_DEBUG) return;
+    (window as unknown as { __LIVEPLAYER_TEST__?: unknown }).__LIVEPLAYER_TEST__ = { startImport };
+  }, [startImport]);
+  const engine = studio.status?.engine;
+  const previewReady = engine?.state === "ready" && !!engine.song && studio.status?.songId == null;
+
   const shown = useMemo(() => sortSongs(filterSongs(songs ?? [], query), sort), [songs, query, sort]);
 
   const rename = async (song: LibrarySong, title: string | null) => {
@@ -123,18 +172,51 @@ export function SongsPage() {
         <Music className="text-info-400" size={26} />
         <div className="flex-1">
           <h1 className="text-2xl font-bold">Songs</h1>
-          <p className="text-sm text-ink-300">Tu biblioteca de canciones. Abre una para tocarla en el Multitrack Studio.</p>
+          <p className="text-sm text-ink-300">Tu biblioteca de canciones. Importa aquí (o arrastra el zip o la carpeta a esta ventana) y ábrelas en el Multitrack Studio.</p>
         </div>
         <button
           type="button"
           disabled={!native}
-          onClick={() => navigate("/studio?import=1")}
+          onClick={() => void pickAndImport()}
           className="flex items-center gap-2 rounded-lg bg-info-500 px-4 py-2 text-sm font-semibold text-white hover:bg-info-400 disabled:opacity-40"
         >
           <Plus size={16} /> Importar canción
         </button>
       </header>
 
+      {hovering && (
+        <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-info-500/10 text-xl font-semibold text-info-400 ring-4 ring-inset ring-info-500">
+          Suelta el zip, la carpeta o los archivos de la canción
+        </div>
+      )}
+      {studio.importDraft && (
+        <ImportDialog
+          draft={studio.importDraft}
+          peaks={previewReady && studio.peaks?.loadId === engine?.loadId ? studio.peaks.tracks : null}
+          previewReady={previewReady}
+          previewProgress={engine?.state === "loading" ? engine.progress : previewReady ? 1 : 0}
+          soloTrack={studio.soloTrack}
+          onSolo={studio.previewSolo}
+          onCommit={studio.commitImport}
+          onCancel={studio.cancelImport}
+        />
+      )}
+      {imported && (
+        <p role="status" className="mb-4 flex items-center gap-3 rounded-lg border border-go-500/40 bg-go-500/10 px-4 py-3 text-sm text-go-400" data-imported={imported.title}>
+          «{imported.title}» está en tu biblioteca.
+          <button type="button" onClick={() => navigate(`/studio?song=${imported.id}`)} className="rounded-md bg-go-500/20 px-2 py-1 text-xs font-semibold hover:bg-go-500/30">
+            Escucharla en Multitrack Studio
+          </button>
+          <button type="button" onClick={() => setImported(null)} className="ml-auto text-xs text-ink-300 hover:text-ink-100">
+            Cerrar
+          </button>
+        </p>
+      )}
+      {studio.error && (
+        <p role="alert" className="mb-4 rounded-lg border border-stop-500/50 bg-stop-500/10 px-4 py-3 text-sm text-stop-500">
+          {studio.error}
+        </p>
+      )}
       {!native && (
         <p className="mb-4 rounded-lg border border-live-500/40 bg-live-500/10 px-4 py-3 text-sm text-live-400">
           La interfaz se está ejecutando fuera de la aplicación de escritorio: la biblioteca no está disponible.
