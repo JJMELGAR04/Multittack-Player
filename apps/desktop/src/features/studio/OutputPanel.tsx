@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { useAudioStatus } from "@/features/audio/useAudioStatus";
 import { Headphones, Speaker, SplitSquareHorizontal } from "lucide-react";
 import type { LoadedSong, OutputMode, OutputSettings, SongRecord, TrackRole, TransportState } from "@/lib/ipc/types";
 import { BUS_LABEL, busForRole, dbToGain, dbToFader, faderToDb, formatDb, gainToDb, TRACK_ROLES } from "./model";
@@ -7,21 +9,21 @@ const MODES: { mode: OutputMode; title: string; detail: string; icon: typeof Spe
   {
     mode: "stereo",
     title: "Ensayo · todo junto",
-    detail: "Instrumentos, click y cues mezclados por las salidas 1-2. Para audífonos o ensayar en casa.",
+    detail: "Instrumentos, click y cues mezclados en estéreo. Para audífonos o ensayar en casa.",
     icon: Headphones,
     needs: 1,
   },
   {
     mode: "split",
     title: "En vivo · 2 salidas",
-    detail: "Salida 1 (izq.): instrumentos en mono → consola / PA. Salida 2 (der.): click y cues → in-ears de la banda.",
+    detail: "Banda (instrumentos, mono) por una salida → consola / PA. Click y cues por otra → in-ears de la banda.",
     icon: SplitSquareHorizontal,
     needs: 2,
   },
   {
     mode: "quad",
     title: "En vivo · 4 salidas",
-    detail: "Salidas 1-2: instrumentos en estéreo → PA. Salidas 3-4: click y cues → in-ears.",
+    detail: "Banda en estéreo por un par de salidas → PA. Click y cues por otro par → in-ears.",
     icon: Speaker,
     needs: 4,
   },
@@ -40,9 +42,25 @@ export function OutputPanel({ settings, transport, song, onChange }: OutputProps
   const [monDb, setMonDb] = useState(gainToDb(settings?.monitorGain ?? 1));
   useEffect(() => setMonDb(gainToDb(settings?.monitorGain ?? 1)), [settings?.monitorGain]);
   const limiting = (transport?.mainLimiterGain ?? 1) < 0.999 || (transport?.monitorLimiterGain ?? 1) < 0.999;
+  const { info } = useAudioStatus(2000);
+  const mainCh = (info?.mainChannel ?? 0) + 1;
+  const monCh = (info?.monitorChannel ?? 1) + 1;
+  const routing =
+    mode === "split"
+      ? `Banda → salida ${mainCh} · Click y cues → salida ${monCh}`
+      : mode === "quad"
+        ? `Banda → salidas ${mainCh}-${mainCh + 1} · Click y cues → salidas ${monCh}-${monCh + 1}`
+        : `Todo → salidas ${mainCh}-${mainCh + 1}`;
 
   return (
     <div className="grid gap-3">
+      <p className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md bg-ink-950 px-3 py-2 text-xs text-ink-200" data-output-routing>
+        <span className="font-semibold">{info?.deviceName ?? "Salida de audio"}</span>
+        <span className="font-mono text-ink-300">{routing}</span>
+        <Link to="/audio-settings" className="ml-auto text-info-400 underline hover:text-ink-100">
+          Cambiar tarjeta o salidas
+        </Link>
+      </p>
       <div className="grid gap-2" role="radiogroup" aria-label="Modo de salida">
         {MODES.map((m) => {
           const disabled = channels > 0 && channels < m.needs;
@@ -75,8 +93,8 @@ export function OutputPanel({ settings, transport, song, onChange }: OutputProps
 
       {mode === "split" && (
         <p className="rounded-md border border-live-500/40 bg-live-500/10 px-3 py-2 text-xs text-live-400">
-          En este modo no escuches con audífonos: oirás los instrumentos por un lado y el click por el otro. Conecta la salida
-          izquierda a la consola y la derecha al sistema de in-ears.
+          En este modo no escuches con audífonos: oirás la banda por un lado y el click por el otro. Conecta cada salida a
+          su canal de la consola (banda → salida {mainCh}, click y cues → salida {monCh}).
         </p>
       )}
 

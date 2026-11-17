@@ -74,7 +74,7 @@ export const MODULES: readonly AppModule[] = [
     id: "audio-settings",
     path: "/audio-settings",
     label: "Audio Settings",
-    description: "Dispositivos, sample rate, buffer y enrutamiento de salidas.",
+    description: "Tarjeta de sonido (ASIO / Windows), frecuencia, búfer, salidas de banda y click, tono de prueba.",
     icon: SlidersHorizontal,
     phase: 4,
   },

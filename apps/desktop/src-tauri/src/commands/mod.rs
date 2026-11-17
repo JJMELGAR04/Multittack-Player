@@ -8,6 +8,7 @@
 //! does it on its own threads and the UI polls `studio_status`.
 
 pub mod app;
+pub mod audio;
 pub mod database;
 pub mod engine;
 pub mod import;

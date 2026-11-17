@@ -57,7 +57,11 @@ function RenameField({ song, onDone }: { song: LibrarySong; onDone: (title: stri
       maxLength={200}
       onChange={(e) => setText(e.target.value)}
       onFocus={(e) => e.target.select()}
-      onBlur={() => onDone(text.trim() && text.trim() !== song.title ? text.trim() : null)}
+      onBlur={(e) => {
+        // Read the field itself: Enter right after typing can arrive before React re-renders.
+        const t = e.currentTarget.value.trim();
+        onDone(t && t !== song.title ? t : null);
+      }}
       onKeyDown={(e) => {
         if (e.key === "Enter") (e.target as HTMLInputElement).blur();
         else if (e.key === "Escape") onDone(null);

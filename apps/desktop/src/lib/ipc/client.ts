@@ -2,6 +2,9 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import type {
   AppInfo,
   AudioDiagnostics,
+  DeviceCapabilities,
+  DeviceChoice,
+  OutputChannels,
   DatabaseStatus,
   EngineInfo,
   EnginePing,
@@ -69,6 +72,12 @@ export const backend = {
   engineInfo: () => call<EngineInfo>("engine_info"),
   enginePing: (value: number) => call<EnginePing>("engine_ping", { value }),
   audioDiagnostics: () => call<AudioDiagnostics>("audio_diagnostics"),
+  audioDescribeDevice: (typeName: string, deviceName: string) =>
+    call<DeviceCapabilities>("audio_describe_device", { typeName, deviceName }),
+  audioSetDevice: (choice: DeviceChoice) => call<OutputInfo>("audio_set_device", { choice }),
+  audioSetChannels: (channels: OutputChannels) => call<OutputInfo>("audio_set_channels", { channels }),
+  audioTestTone: (channel: number) => call<void>("audio_test_tone", { channel }),
+  audioShowPanel: () => call<void>("audio_show_panel"),
   databaseStatus: () => call<DatabaseStatus>("database_status"),
 
   // Multitrack Studio

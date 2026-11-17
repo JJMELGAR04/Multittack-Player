@@ -64,11 +64,21 @@ archivos ──SongLoader──► SongData (RAM, frecuencia del dispositivo, in
                  · MONITOREO (click + cues) × fundido × volumen de monitoreo × ajuste automático
                  → limitador de seguridad por bus (−0,5 dBFS, 1 ms de anticipación)
                               │
-               mapa de salidas: estéreo (todo en 1/2) · dividido (instr. mono → 1, click → 2)
-                                · 4 canales (instr. → 1/2, click → 3/4)
+               mapa de salidas (salidas elegidas por el usuario, fase 4):
+                 · estéreo: todo en el par N/N+1
+                 · dividido: banda mono → salida A, click + cues mono → salida B (A ≠ B)
+                 · 4 canales: banda → par A, click → par B
+                 + tono de prueba (1 kHz, −18 dBFS, 2 s, fundidos de 10 ms) en cualquier salida
                               │
-                         dispositivo de salida (hasta 4 canales)
+                         dispositivo de salida (ASIO / WASAPI; todas sus salidas abiertas, hasta 32)
 ```
+
+### Dispositivo de audio (fase 4)
+
+- **Elección**: controlador (ASIO, WASAPI compartido / exclusivo / baja latencia), dispositivo, frecuencia y búfer. Se guarda (`audio.device`) y se abre al arrancar la app.
+- **Interfaz no conectada**: la elección se recuerda; suena por la salida por defecto. Cada ~1,5 s el motor (`Engine::maintainDevice`, llamado desde las consultas de estado) comprueba la lista de dispositivos: si la interfaz aparece, la vuelve a abrir; si la abierta desaparece, cierra y pasa a la salida por defecto. Cada cambio queda como aviso (`deviceEvents` / `lastDeviceEvent`) y la UI lo muestra en una franja en todas las páginas.
+- **Otra frecuencia**: las canciones viven en RAM a la frecuencia del dispositivo. Si cambia, la canción se vuelve a decodificar en segundo plano (r8brain) a la nueva frecuencia y se reinstala conservando posición, tempo, reproducción, volúmenes de pista, buses y partes detectadas (sin repetir el análisis).
+- **Salidas de cada bus** (`output.channels`): se validan contra el número de salidas del dispositivo; si ya no caben (otra interfaz), se vuelve a la disposición habitual.
 
 - **Ajuste automático de nivel**: al cargar (y al cambiar el rol de una pista) se mide el pico real de la suma de cada bus y se baja lo justo para que quede en −1 dBFS. Los stems suelen venir normalizados uno por uno: en *Ancient* la suma de instrumentos llegaba a +6,1 dBFS (saturaba). Es solo ganancia: no cambia el sonido.
 - **Limitador**: retención de pico + filtro de caja (garantiza no pasar del techo sin escalones de ganancia). Normalmente en reposo; protege ante cambios de volumen por pista (fase 3).
@@ -100,7 +110,11 @@ En el escritorio, el hilo principal ejecuta el bucle de mensajes nativo (Win32 e
 | `studio_detect_sections(bpm, downbeatOffsetSec)` | vuelve a detectar secciones con un tempo confirmado | sí |
 | `studio_save_sections` / `studio_save_tempo` / `studio_get_song` / `studio_recent_songs` | persistencia de la canción | no |
 | `transport_play/pause/stop/seek/set_master_gain/set_tempo_ratio/state` | transporte | sí |
-| `output_info` | dispositivo, frecuencia, buffer, canales y latencia de salida | sí |
+| `output_info` | dispositivo, frecuencia, búfer, salidas, latencia, cortes, carga, salidas de cada bus, dispositivo preferido y avisos (también hace el mantenimiento del dispositivo) | sí |
+| `audio_describe_device(typeName, deviceName)` | frecuencias, búferes y nombres de salida de un dispositivo | sí |
+| `audio_set_device(choice)` | abre y guarda el dispositivo (si no está conectado, lo recuerda y usa el de por defecto) | sí |
+| `audio_set_channels(channels)` | salida de la banda y del click (se guardan) | sí |
+| `audio_test_tone(channel)` / `audio_show_panel` | tono de prueba en una salida (−1 lo para) / panel del controlador ASIO | sí |
 | `studio_import_inspect(paths)` | lee un zip (lo extrae a la biblioteca), una carpeta o archivos; sugiere título, BPM y qué es cada archivo; detecta si ya se importó | no (solo archivos) |
 | `studio_import_preview(tracks)` | carga las pistas para poder escuchar cada una sola antes de guardar | sí |
 | `studio_import_commit(commit)` / `studio_import_cancel` | guarda la canción con lo confirmado (sin volver a decodificar) / descarta y borra lo extraído | sí |

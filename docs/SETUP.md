@@ -23,11 +23,15 @@ git clone --depth 1 -b 9.0.5 https://github.com/juce-framework/JUCE.git third_pa
 git clone --depth 1 -b 1.4.0 https://github.com/Signalsmith-Audio/signalsmith-stretch.git third_party/signalsmith-stretch
 git clone --depth 1 -b 0.6.4 https://github.com/Signalsmith-Audio/linear.git third_party/signalsmith-linear
 git clone --depth 1 -b version-6.5 https://github.com/avaneev/r8brain-free-src.git third_party/r8brain
+# ASIO (Windows): descarga el SDK de Steinberg (GPLv3) en third_party/asio/
+node tools/fetch-asio-sdk.mjs
 npm install
 ```
 
 Si alguna de esas carpetas no existe, CMake descarga esa versión exacta automáticamente (`FetchContent`).
 También se puede indicar una ruta con la variable de entorno `LIVEPLAYER_JUCE_DIR`.
+
+**ASIO**: si `third_party/asio/ASIOSDK/common/iasiodrv.h` existe (o la variable `LIVEPLAYER_ASIO_SDK_DIR` apunta al SDK), el motor se compila con ASIO; si no, solo con WASAPI. CMake lo indica con `LIVEPLAYER: ASIO enabled` / `disabled`.
 
 ## Comandos
 

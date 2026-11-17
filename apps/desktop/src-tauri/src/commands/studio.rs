@@ -170,6 +170,7 @@ pub(crate) fn apply_output_settings(engine: &Engine, db: &Database) {
     if engine.set_output_mode(s.mode).is_err() {
         let _ = engine.set_output_mode(OutputMode::Stereo);
     }
+    crate::commands::audio::apply_saved_channels(engine, db);
 }
 
 #[tauri::command]
@@ -187,6 +188,8 @@ pub fn studio_set_output(engine: State<'_, Engine>, db: State<'_, DbState>, sett
     engine.set_monitor_gain(settings.monitor_gain)?;
     engine.set_master_gain(settings.main_gain)?;
     let db = lock(&db)?;
+    // Keep the chosen outputs when they fit the new mode (the engine falls back otherwise).
+    crate::commands::audio::apply_saved_channels(&engine, &db);
     db.set_setting(OUTPUT_MODE_KEY, &serde_json::to_string(&settings.mode).unwrap_or_else(|_| "\"stereo\"".into()))?;
     db.set_setting(MONITOR_GAIN_KEY, &settings.monitor_gain.to_string())?;
     db.set_setting(MAIN_GAIN_KEY, &settings.main_gain.to_string())?;

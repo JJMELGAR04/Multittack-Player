@@ -47,7 +47,13 @@ describe("navigation", () => {
     expect(screen.getByText(/la biblioteca no está disponible/)).toBeTruthy();
   });
 
-  it.each(MODULES.filter((m) => m.path !== "/" && m.id !== "studio" && m.id !== "songs"))("renders planned module $label", (m) => {
+  it("renders Audio Settings (phase 4) without faking devices outside Tauri", () => {
+    renderAt("/audio-settings");
+    expect(screen.getByRole("heading", { level: 1, name: "Audio Settings" })).toBeTruthy();
+    expect(screen.getByText(/no hay acceso a los dispositivos de audio/)).toBeTruthy();
+  });
+
+  it.each(MODULES.filter((m) => m.path !== "/" && !["studio", "songs", "audio-settings"].includes(m.id)))("renders planned module $label", (m) => {
     renderAt(m.path);
     expect(screen.getByRole("heading", { level: 1, name: m.label })).toBeTruthy();
     expect(screen.getByText(`Planificado para la Fase ${m.phase}`)).toBeTruthy();
