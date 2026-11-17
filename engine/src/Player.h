@@ -42,6 +42,17 @@ public:
     void setMasterGain (float gain) { masterGainTarget.store (gain); }
     void setTempoRatio (double ratio);
 
+    /** Seamless musical jump: when playback reaches song second `atSec` it
+        continues from `targetSec`, sample-accurate, with a 5 ms crossfade
+        (no gap, the click keeps its grid). Needs playback running and `atSec`
+        far enough ahead of the render (see minJumpLeadSeconds). */
+    bool scheduleJump (double atSec, double targetSec);
+    void cancelJump();
+    /** Seamless loop of [startSec, endSec); endSec <= startSec turns it off. */
+    void setLoop (double startSec, double endSec);
+    /** How far ahead (song seconds) a jump must be scheduled right now. */
+    double minJumpLeadSeconds() const noexcept;
+
     /** Output routing. Mode 0: everything on 1/2 (rehearsal). Mode 1: instruments
         mono on output 1, click/cues mono on output 2. Mode 2: instruments on 1/2,
         click/cues on 3/4 (needs 4 outputs; falls back to mode 0 otherwise). */
@@ -96,6 +107,10 @@ public:
         double monitorGain = 1.0;
         double mainLimiterGain = 1.0;    // 1 = limiter idle
         double monitorLimiterGain = 1.0;
+        double pendingJumpAt = -1.0;     // song seconds, -1 = none
+        double pendingJumpTarget = -1.0;
+        double loopStart = -1.0, loopEnd = -1.0; // -1 = no loop
+        juce::uint64 jumpsDone = 0;
     };
     Snapshot snapshot() const;
 
@@ -129,6 +144,7 @@ private:
     int numTracks = 0;
     ChunkRing ring;
     SongRenderer renderer; // render thread only (after setSong)
+    SongRenderer altRenderer; // second renderer for seamless jumps / loops
     std::unique_ptr<RenderThread> renderThread;
     std::atomic<bool> sampleRateMismatch { false };
 
@@ -137,6 +153,13 @@ private:
     std::atomic<uint32_t> seekGeneration { 0 };
     std::atomic<double> seekTarget { 0.0 };  // song samples
     std::atomic<double> tempoTarget { 1.0 };
+
+    // Scheduled jump / loop (control -> render), in song samples.
+    std::atomic<uint32_t> jumpSerial { 0 };
+    std::atomic<double> jumpAt { 0.0 }, jumpTarget { 0.0 };
+    std::atomic<bool> jumpActive { false };
+    std::atomic<double> loopStartSamples { 0.0 }, loopEndSamples { 0.0 };
+    std::atomic<juce::uint64> jumpsDone { 0 };
     std::atomic<float> masterGainTarget { 1.0f };
 
     // Published by the audio / render threads.

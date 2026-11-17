@@ -99,6 +99,7 @@ Engine::Engine() = default;
 Engine::~Engine()
 {
     loader.reset();
+    preloader.reset();
     analysis.reset();
     if (callbackAttached)
         deviceManager.removeAudioCallback (&player);
@@ -536,6 +537,25 @@ bool Engine::loadSong (std::vector<TrackRequest> tracks, double bpm, int beats)
 
     loader.reset(); // cancels a load in progress
     loaderIsReload = false;
+    harvestPreload();
+    const double deviceRate = deviceManager.getCurrentAudioDevice()->getCurrentSampleRate();
+    if (preloadedSong != nullptr && preloadRequests == tracks && std::abs (preloadedSong->sampleRate - deviceRate) < 0.5)
+    {
+        // Decoded in advance: installed right away, no waiting between songs.
+        songRequests = tracks;
+        pendingBpmHint = bpm > 0.0 ? bpm : 0.0;
+        pendingBeatsPerBar = juce::jlimit (1, 16, beats);
+        currentLoadId = nextLoadId++;
+        loadError.clear();
+        auto ready = std::move (preloadedSong);
+        auto peaks = std::move (preloadedPeaks);
+        auto mix = std::move (preloadedMix);
+        preloadedSong = nullptr;
+        preloadRequests.clear();
+        preloadState = "idle";
+        installSong (std::move (ready), std::move (peaks), std::move (mix));
+        return true;
+    }
     songRequests = tracks;
     pendingBpmHint = bpm > 0.0 ? bpm : 0.0;
     pendingBeatsPerBar = juce::jlimit (1, 16, beats);
@@ -578,41 +598,107 @@ void Engine::harvestLoader()
                 finishRateReload();
                 return;
             }
-            analysis.reset();
             auto newSong = loader->getSong();
-            trackPeaks = loader->takeTrackPeaks();
-            mixPeaks = loader->takeMixPeaks();
+            auto peaks = loader->takeTrackPeaks();
+            auto mix = loader->takeMixPeaks();
             loader.reset();
-
-            // Swap songs with the callback detached (the removal waits for any
-            // running callback to finish), so the audio thread never sees a
-            // half-installed song.
-            if (callbackAttached)
-                deviceManager.removeAudioCallback (&player);
-            player.setSong (newSong);
-            if (callbackAttached)
-                deviceManager.addAudioCallback (&player);
-
-            song = std::move (newSong); // the previous song is freed here, on the control thread
-            trackRoles.clear();
-            trackBuses.clear();
-            for (const auto& t : song->tracks)
-            {
-                trackRoles.push_back (t.role);
-                trackBuses.push_back (t.bus);
-            }
-            mixPeaksDirty = false;
-            trackGains.assign (song->tracks.size(), 1.0f);
-            updateBusTrims();
-            bpmHint = pendingBpmHint;
-            beatsPerBar = pendingBeatsPerBar;
-            loadState = "ready";
-            detectedTempo = {};
-            sections.clear();
-            startAnalysis (bpmHint, -1.0, beatsPerBar);
+            installSong (std::move (newSong), std::move (peaks), std::move (mix));
             return;
         }
     }
+}
+
+bool Engine::preloadSong (std::vector<TrackRequest> tracks)
+{
+    preloader.reset();
+    if (tracks.empty())
+    {
+        preloadedSong = nullptr;
+        preloadedPeaks.clear();
+        preloadedMix.clear();
+        preloadRequests.clear();
+        preloadState = "idle";
+        return true;
+    }
+    if (! openDefaultOutput())
+        return false;
+    if (tracks == preloadRequests && (preloadedSong != nullptr || preloader != nullptr))
+        return true;
+    if (tracks == songRequests && song != nullptr)
+        return true; // already the current song
+    preloadedSong = nullptr;
+    preloadRequests = tracks;
+    preloadState = "loading";
+    preloader = std::make_unique<SongLoader> (std::move (tracks), deviceManager.getCurrentAudioDevice()->getCurrentSampleRate(), 0);
+    // Low priority: decoding must never compete with the song that is playing.
+    preloader->startThread (juce::Thread::Priority::low);
+    return true;
+}
+
+void Engine::harvestPreload()
+{
+    if (preloader == nullptr)
+        return;
+    const auto phase = preloader->getPhase();
+    if (phase == SongLoader::Phase::loading)
+        return;
+    if (phase == SongLoader::Phase::failed)
+    {
+        preloadState = "error";
+        preloader.reset();
+        return;
+    }
+    auto next = preloader->getSong();
+    preloadedPeaks = preloader->takeTrackPeaks();
+    preloadedMix = preloader->takeMixPeaks();
+    preloader.reset();
+
+    // Keep it only if both songs fit comfortably in RAM.
+    const double totalMB = (double) juce::SystemStats::getMemorySizeInMegabytes();
+    const double needMB = (double) (next->memoryBytes() + (song != nullptr ? song->memoryBytes() : 0)) / (1024.0 * 1024.0);
+    if (totalMB > 0 && needMB > 0.5 * totalMB)
+    {
+        preloadedPeaks.clear();
+        preloadedMix.clear();
+        preloadState = "skipped";
+        return;
+    }
+    preloadedSong = std::move (next);
+    preloadState = "ready";
+}
+
+void Engine::installSong (SongPtr newSong, std::vector<std::vector<juce::uint8>> peaks, std::vector<juce::uint8> mix)
+{
+    analysis.reset();
+    trackPeaks = std::move (peaks);
+    mixPeaks = std::move (mix);
+
+    // Swap songs with the callback detached (the removal waits for any
+    // running callback to finish), so the audio thread never sees a
+    // half-installed song.
+    if (callbackAttached)
+        deviceManager.removeAudioCallback (&player);
+    player.setSong (newSong);
+    if (callbackAttached)
+        deviceManager.addAudioCallback (&player);
+
+    song = std::move (newSong); // the previous song is freed here, on the control thread
+    trackRoles.clear();
+    trackBuses.clear();
+    for (const auto& t : song->tracks)
+    {
+        trackRoles.push_back (t.role);
+        trackBuses.push_back (t.bus);
+    }
+    mixPeaksDirty = false;
+    trackGains.assign (song->tracks.size(), 1.0f);
+    updateBusTrims();
+    bpmHint = pendingBpmHint;
+    beatsPerBar = pendingBeatsPerBar;
+    loadState = "ready";
+    detectedTempo = {};
+    sections.clear();
+    startAnalysis (bpmHint, -1.0, beatsPerBar);
 }
 
 void Engine::startAnalysis (double bpm, double downbeat, int beats)
@@ -758,6 +844,7 @@ juce::String Engine::getSongStatusJson()
 {
     maintainDevice();
     harvestLoader();
+    harvestPreload();
     harvestAnalysis();
 
     auto* root = new juce::DynamicObject();
@@ -765,6 +852,14 @@ juce::String Engine::getSongStatusJson()
     root->setProperty ("progress", loader != nullptr ? (double) loader->getProgress() : (loadState == "ready" ? 1.0 : 0.0));
     root->setProperty ("error", juce::String (loadError));
     root->setProperty ("loadId", (juce::int64) currentLoadId);
+    {
+        auto* p = new juce::DynamicObject();
+        p->setProperty ("state", juce::String (preloadState));
+        p->setProperty ("tracks", (int) preloadRequests.size());
+        if (preloadedSong != nullptr)
+            p->setProperty ("memoryMB", (double) preloadedSong->memoryBytes() / (1024.0 * 1024.0));
+        root->setProperty ("preload", juce::var (p));
+    }
 
     if (song != nullptr)
     {

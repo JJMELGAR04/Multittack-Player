@@ -45,6 +45,10 @@ public:
     void render (float* const* out, double targetRate, ChunkMeta& meta);
 
     double currentRate() const noexcept { return rate; }
+    /** Song position (samples) of the next frame render() will produce. */
+    double nextSourcePos() const noexcept { return position(); }
+    /** Song samples per output frame right now (1 in direct mode). */
+    double effectiveRate() const noexcept { return mode == Mode::direct ? 1.0 : rate; }
     bool isStretching() const noexcept { return mode == Mode::stretch; }
     bool isAtEnd() const noexcept { return position() >= (double) song->lengthSamples; }
 

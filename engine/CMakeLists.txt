@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(liveplayer_engine
-    VERSION 0.4.0
+    VERSION 0.5.0
     DESCRIPTION "LIVEPLAYER native real-time audio engine"
     LANGUAGES C CXX)
 
