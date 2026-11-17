@@ -70,7 +70,9 @@ try {
   const text = await evaluate("document.body.innerText");
   check("isTauri() true (no 'fuera de la aplicación' banner)", !text.includes("fuera de la aplicación de escritorio"));
   check("engine_info: JUCE 9.0.5", text.includes("9.0.5"));
-  check("engine_info: ABI v7", text.includes("v7"));
+  check("engine_info: ABI v8", text.includes("v8"));
+  const navText = await evaluate(`document.querySelector("header").innerText`);
+  check("no development-phase labels in the app (nav shows only the version)", !/Fase/i.test(navText) && /v\d+\.\d+\.\d+/.test(navText) && !(await evaluate(`document.body.innerText.includes("Fase ")`)), navText.replace(/\s+/g, " ").slice(-30));
   check("audio_diagnostics: Windows Audio listed", text.includes("Windows Audio"));
   check("database_status: songs tables (schema 2)", text.includes("songs") && text.includes("song_sections"));
   check("app_info: windows", text.includes("windows"));
@@ -396,7 +398,11 @@ try {
   const studioRouting = async () => {
     await evaluate(`location.hash = "#/studio?song=${folderSong.id}"`);
     await waitFor(`!!document.querySelector("[aria-label^='Volumen de Bass:']")`, "studio with the song");
-    await evaluate(`[...document.querySelectorAll("button")].find(b => b.textContent.trim().toUpperCase() === "SALIDAS")?.click()`);
+    // The song may reload right after opening: retry the tab until the panel shows.
+    for (let i = 0; i < 30 && !(await evaluate(`!!document.querySelector("[data-output-routing]")`)); i++) {
+      await evaluate(`[...document.querySelectorAll("button")].find(b => b.textContent.trim().toUpperCase() === "SALIDAS")?.click()`);
+      await sleep(300);
+    }
     await waitFor(`!!document.querySelector("[data-output-routing]")`, "routing line");
     await sleep(2200);
     return evaluate(`document.querySelector("[data-output-routing]").innerText`);
@@ -680,6 +686,35 @@ try {
   check("backup: export songs + setlists to one zip", exp.songs >= 2 && exp.setlists >= 1 && existsSync(backupZip), exp.__error?.message ?? JSON.stringify(exp));
   const imp = await invoke("backup_import", { path: backupZip });
   check("backup: restoring it again duplicates nothing", imp.songs === 0 && imp.skippedSongs === exp.songs && imp.setlists === 0, imp.__error?.message ?? JSON.stringify(imp));
+
+
+  // ---- Phase 6: cache, economy mode, daily copies, error log ----
+  const firstLoad = (await invoke("studio_status")).engine.song;
+  await invoke("studio_open_song", { songId: folderSong.id });
+  let reopened = null;
+  for (let i = 0; i < 150; i++) {
+    const st = await invoke("studio_status");
+    if (st.songId === folderSong.id && st.engine.state === "ready") { reopened = st.engine.song; break; }
+    await sleep(40);
+  }
+  check("reopening a song uses the prepared copy (cache): all tracks, fast", reopened && reopened.cachedTracks === reopened.tracks.length && reopened.loadSeconds < 1.5, reopened ? `${reopened.cachedTracks}/${reopened.tracks.length} tracks in ${reopened.loadSeconds.toFixed(2)} s` : "not loaded");
+  await evaluate(`location.hash = "#/settings"`);
+  await waitFor(`!!document.querySelector("[aria-label='Modo económico']")`, "performance section");
+  let perf = await invoke("performance_info");
+  check("cache size shown in General Settings", perf.cacheFiles >= 5 && perf.cacheUsedMb > 1, `${perf.cacheFiles} files, ${perf.cacheUsedMb.toFixed(0)} MB of ${perf.cacheLimitMb} MB`);
+  check("a daily copy of the library was made at start-up", perf.backups.length >= 1 && /liveplayer-\d{4}-\d{2}-\d{2}\.sqlite3/.test(perf.backups[0]), perf.backups.join(", "));
+  await evaluate(`document.querySelector("[aria-label='Modo económico']").click()`);
+  await sleep(600);
+  perf = await invoke("performance_info");
+  const econSong = (await invoke("studio_status")).engine.song;
+  check("economy mode on: saved and applied to the song (keeps playing where it was)", perf.economy === true && econSong?.economy === true);
+  await evaluate(`document.querySelector("[aria-label='Modo económico']").click()`);
+  await sleep(600);
+  check("economy mode off again", (await invoke("performance_info")).economy === false && (await invoke("studio_status")).engine.song?.economy === false);
+  const logText = await invoke("log_recent", { lines: 200 });
+  check("error log written (start-up line present)", typeof logText === "string" && logText.includes("iniciado"), logText.split("\n").slice(-1)[0]);
+  await shot("15-performance");
+  void firstLoad;
 
   await invoke("transport_set_master_gain", { gain: 1 });
 

@@ -217,6 +217,12 @@ pub struct LoadedTrack {
     pub resampled: bool,
     pub role: String,
     pub bus: String,
+    /// Stereo file with identical channels, kept as one (half the memory, same sound).
+    #[serde(default)]
+    pub dual_mono: bool,
+    /// Came from the decoded-audio cache.
+    #[serde(default)]
+    pub from_cache: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -231,6 +237,14 @@ pub struct LoadedSong {
     pub main_trim_db: f64,
     pub monitor_trim_db: f64,
     pub tracks: Vec<LoadedTrack>,
+    /// How long loading took (seconds) and how many tracks came from the cache.
+    #[serde(default)]
+    pub load_seconds: f64,
+    #[serde(default)]
+    pub cached_tracks: u32,
+    /// Economy mode (lighter tempo / key processing) in use.
+    #[serde(default)]
+    pub economy: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

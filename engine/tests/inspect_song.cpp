@@ -55,10 +55,12 @@ int main (int argc, char** argv)
 {
     double bpm = 0.0;
     int beats = 4;
+    juce::File cacheDir; // --cache <dir>: use the decoded-audio cache there
     std::vector<std::string> files;
     for (int i = 1; i < argc; ++i)
     {
-        if (! std::strcmp (argv[i], "--bpm") && i + 1 < argc) bpm = std::atof (argv[++i]);
+        if (! std::strcmp (argv[i], "--cache") && i + 1 < argc) cacheDir = juce::File (juce::String::fromUTF8 (argv[++i]));
+        else if (! std::strcmp (argv[i], "--bpm") && i + 1 < argc) bpm = std::atof (argv[++i]);
         else if (! std::strcmp (argv[i], "--beats") && i + 1 < argc) beats = std::atoi (argv[++i]);
         else if (! std::strcmp (argv[i], "--compare") && i + 2 < argc)
         {
@@ -119,11 +121,16 @@ int main (int argc, char** argv)
     std::vector<TrackRequest> req;
     for (auto& f : files)
         req.push_back ({ f, juce::File (juce::String::fromUTF8 (f.c_str())).getFileNameWithoutExtension().toStdString() });
-    SongLoader loader (req, 48000.0, 1);
+    SongLoader loader (req, 48000.0, 1, cacheDir, (juce::int64) 8192 * 1024 * 1024);
     loader.startThread();
-    while (loader.getPhase() == SongLoader::Phase::loading) juce::Thread::sleep (20);
+    while (loader.getPhase() == SongLoader::Phase::loading) juce::Thread::sleep (5);
     if (loader.getPhase() != SongLoader::Phase::ready) { std::printf ("load failed: %s\n", loader.getError().c_str()); return 1; }
     auto song = loader.getSong();
+    int dualMono = 0;
+    for (auto& t : song->tracks)
+        dualMono += t.dualMono ? 1 : 0;
+    std::printf ("loaded in %.2f s, %d of %zu tracks from the cache, %.0f MB in memory, %d identical-channel tracks kept as mono\n",
+                 song->loadSeconds, song->cachedTracks, song->tracks.size(), song->memoryBytes() / 1048576.0, dualMono);
 
     std::printf ("%-14s %-5s %8s %4s %10s %9s %9s %8s\n", "track", "fmt", "srcRate", "ch", "length s", "peak dB", "rms dB", "align");
     const auto ref = envelope (song->tracks[0].audio, song->sampleRate);

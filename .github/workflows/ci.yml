@@ -3,10 +3,10 @@
 # so the Mac version is compiled and tested without owning a Mac.
 name: CI
 
+# Started by hand for now (Actions tab → CI → Run workflow): the account had a
+# billing lock that stops hosted runners. Once it is solved, add back:
+#   push: { branches: ["main", "feature/**"] }
 on:
-  push:
-    branches: ["main", "feature/**"]
-  pull_request:
   workflow_dispatch:
 
 concurrency:

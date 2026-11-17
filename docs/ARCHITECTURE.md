@@ -73,6 +73,20 @@ archivos ──SongLoader──► SongData (RAM, frecuencia del dispositivo, in
                          dispositivo de salida (ASIO / WASAPI; todas sus salidas abiertas, hasta 32)
 ```
 
+### Rendimiento y robustez (fase 6)
+
+- **Caché de audio decodificado** (`<datos>/cache/*.lpc`): tras decodificar y convertir una pista, se guarda en float de 32 bits sin compresión (idéntica bit a bit). La clave es la ruta, el tamaño, la fecha del archivo y la frecuencia del dispositivo, así que un archivo cambiado nunca usa una entrada vieja. Se respeta un límite de tamaño (4 GB por defecto): se borra primero lo que hace más tiempo que no se usa. Al volver a abrir una canción solo se lee del disco.
+- **Pistas "estéreo" con los dos canales idénticos**: se guardan como un canal (la mitad de memoria) y se reproducen a nivel completo por los dos lados, con la misma salida que antes.
+- **Modo económico**: `presetCheaper` de Signalsmith para tempo y tono. Al cambiarlo se reinstala la canción conservando posición, tempo, tono y mezcla.
+- **Limitador de salida**: cuando los dos buses comparten salidas (modo ensayo / mono), su suma pasa por un tercer limitador. Cada bus ya estaba limitado, pero juntos podían pasar de 0 dBFS (lo encontró la prueba de resistencia).
+- **Decodificación con prioridad baja** y revisión de la lista de dispositivos cada 5 s (2 s si se espera a una interfaz).
+- **Prueba de resistencia** (`liveplayer_soak <dir> <minutos> <velocidad>`): toca durante el tiempo indicado cambiando de canción, saltando, con bucles y con cambios de tempo, tono y volumen. Comprueba que no haya cortes, muestras inválidas ni picos sobre el techo, y que la memoria no crezca.
+- **Biblioteca**:
+  - copia diaria con `VACUUM INTO` en `<datos>/backups` (se guardan 7);
+  - al abrir se ejecuta `PRAGMA quick_check`; si el archivo está dañado se aparta (`.danada-<fecha>`) y se restaura la última copia.
+- **Registro de errores** (`<datos>/logs/liveplayer.log`, rotación a 1 MB): errores del motor y de la base de datos, cierres inesperados (panics) y errores de la interfaz.
+- **macOS**: versión mínima 11 (Big Sur); se enlazan los frameworks que usan los módulos de JUCE. El flujo `.github/workflows/ci.yml` compila y prueba en Windows y macOS en máquinas de GitHub.
+
 ### Cambio de tono (fase 5)
 
 - `lp_engine_set_transpose(semitones)`: el render pasa a modo time-stretch (Signalsmith Stretch) como con el tempo, y cada pista de música recibe `setTransposeSemitones` con un límite de tonalidad de 8 kHz (los platos y el ruido no se "afinan").
