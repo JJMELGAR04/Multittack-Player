@@ -203,7 +203,7 @@ static void storeMax (std::atomic<float>& a, float v) noexcept
 void Player::setTrackGain (int track, float gain)
 {
     if (track >= 0 && track < numTracks)
-        trackGainTarget[(size_t) track].store (juce::jlimit (0.0f, 2.0f, gain));
+        trackGainTarget[(size_t) track].store (juce::jlimit (0.0f, 4.0f, gain));
 }
 
 void Player::setTempoRatio (double ratio)

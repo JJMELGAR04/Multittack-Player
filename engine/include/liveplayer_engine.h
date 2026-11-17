@@ -179,11 +179,11 @@ typedef enum lp_output_mode {
 
 /** Sets a track's output bus and analysis role (takes effect immediately). */
 lp_result lp_engine_set_track_route(lp_engine* engine, int32_t track, int32_t bus, int32_t role);
-/** Per-track gain 0..2, smoothed (~10 ms). Used to audition a single track. */
+/** Per-track gain 0..4 (+12 dB), smoothed (~10 ms): track fader, mute, solo. */
 lp_result lp_engine_set_track_gain(lp_engine* engine, int32_t track, double gain);
 /** LP_ERR_INVALID_STATE if LP_OUTPUT_QUAD is requested on a device with < 4 outputs. */
 lp_result lp_engine_set_output_mode(lp_engine* engine, int32_t mode);
-/** Volume of the monitor bus (click + cues), linear 0..2. Smoothed. */
+/** Volume of the monitor bus (click + cues), linear 0..4. Smoothed. */
 lp_result lp_engine_set_monitor_gain(lp_engine* engine, double gain);
 
 /**
@@ -230,7 +230,7 @@ lp_result lp_engine_pause(lp_engine* engine);
 lp_result lp_engine_stop(lp_engine* engine);
 /** Moves to `position_sec` (song time). While playing: fade out, jump, fade in. */
 lp_result lp_engine_seek(lp_engine* engine, double position_sec);
-/** Master volume, linear 0..2 (1 = unity). Smoothed, never steps. */
+/** Master volume, linear 0..4 (1 = unity, 4 = +12 dB). Smoothed, never steps. */
 lp_result lp_engine_set_master_gain(lp_engine* engine, double gain);
 /**
  * Playback speed relative to the original tempo, 0.5..2.0. Pitch is kept.

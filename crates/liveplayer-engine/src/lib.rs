@@ -413,7 +413,7 @@ impl Engine {
         self.map(unsafe { ffi::lp_engine_set_track_route(self.raw.as_ptr(), track, bus, role) })
     }
 
-    /// Per-track gain 0..2 (used to audition one track).
+    /// Per-track gain 0..4 (fader, mute, solo, audition).
     pub fn set_track_gain(&self, track: i32, gain: f64) -> Result<(), EngineError> {
         self.check_thread()?;
         // SAFETY: valid engine pointer; owning thread.
@@ -441,7 +441,7 @@ impl Engine {
         Ok(Meters { tracks: v[..n].to_vec(), main: [bus(0), bus(1)], monitor: [bus(2), bus(3)] })
     }
 
-    /// Volume of the click / cues bus, linear 0..2.
+    /// Volume of the click / cues bus, linear 0..4.
     pub fn set_monitor_gain(&self, gain: f64) -> Result<(), EngineError> {
         self.check_thread()?;
         // SAFETY: valid engine pointer; owning thread.
@@ -472,7 +472,7 @@ impl Engine {
         self.map(unsafe { ffi::lp_engine_seek(self.raw.as_ptr(), position_sec) })
     }
 
-    /// Linear gain 0..2 (1 = unity).
+    /// Linear gain 0..4 (1 = unity, ~2.51 = +8 dB).
     pub fn set_master_gain(&self, gain: f64) -> Result<(), EngineError> {
         self.check_thread()?;
         // SAFETY: valid engine pointer; owning thread.
