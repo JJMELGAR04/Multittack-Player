@@ -6,6 +6,8 @@ import {
   barBeat,
   effectiveGains,
   meterFraction,
+  dbToFader,
+  faderToDb,
   textOn,
   dbToGain,
   formatBpm,
@@ -104,6 +106,25 @@ describe("track order", () => {
 });
 
 describe("mixer and meters", () => {
+  it("puts 0 dB in the middle of the fader and round-trips", () => {
+    expect(dbToFader(0)).toBe(0.5);
+    expect(dbToFader(8)).toBe(1);
+    expect(dbToFader(-60)).toBe(0);
+    expect(dbToFader(4)).toBeCloseTo(0.75, 6);
+    expect(faderToDb(0.5)).toBe(0);
+    expect(faderToDb(0.501)).toBe(0); // detent around 0 dB
+    expect(faderToDb(0)).toBe(-60);
+    expect(faderToDb(1)).toBe(8);
+    for (const db of [-45, -32, -20, -12, -6.5, -3, 1.5, 6]) expect(faderToDb(dbToFader(db))).toBeCloseTo(db, 1);
+    // monotonic: higher on the fader is always louder
+    let prev = -Infinity;
+    for (let p = 0; p <= 1; p += 0.01) {
+      const d = faderToDb(p);
+      expect(d).toBeGreaterThanOrEqual(prev);
+      prev = d;
+    }
+  });
+
   it("applies mute and solo like a console", () => {
     expect(effectiveGains([0, 0, -6], [false, true, false], [false, false, false])).toEqual([1, 0, dbToGain(-6)]);
     // Solo: only soloed tracks sound, even if muted ones exist.

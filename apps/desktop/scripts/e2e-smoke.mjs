@@ -285,6 +285,10 @@ try {
   await sleep(800); // saved mixer applied after load
   check("type an exact volume (double-click): -6,5 dB", (await typeDb("Bass", "-6,5")) === "−6.5", await evaluate(`document.querySelector("[aria-label^='Volumen de Bass:']")?.textContent`));
   check("fader limit is +8 dB (typing +12 gives +8)", (await typeDb("Keys", "+12")) === "+8.0");
+  const faderPos = (n) => evaluate(`(() => { const f = document.querySelector("input[type=range][aria-label='Volumen de ${n}']"); const r = f.getBoundingClientRect(); return [Number(f.value), Math.round(r.height)]; })()`);
+  const [keysPos] = await faderPos("Keys");
+  const [drumsPos, faderHeight] = await faderPos("Click");
+  check("fader curve: 0 dB sits in the middle, +8 dB at the top", drumsPos === 500 && keysPos === 1000 && faderHeight === 140, `0 dB at ${drumsPos}/1000, +8 at ${keysPos}/1000`);
   await clickButton("Silenciar Click");
   await sleep(800); // debounced save
   const mixSaved = await invoke("studio_get_song", { songId: st2.songId });

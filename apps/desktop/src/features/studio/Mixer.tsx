@@ -2,7 +2,7 @@ import { GripHorizontal, Headphones, Speaker } from "lucide-react";
 import { useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import type { Bus, TrackRole } from "@/lib/ipc/types";
 import { Meter } from "./Meter";
-import { formatDb, MAX_DB, MIN_DB, parseDbInput, ROLE_COLORS, textOn } from "./model";
+import { dbToFader, faderToDb, formatDb, MAX_DB, MIN_DB, parseDbInput, ROLE_COLORS, textOn } from "./model";
 import type { MeterStore } from "./useStudio";
 
 export interface MixerTrack {
@@ -22,24 +22,83 @@ interface GripHandlers {
   onPointerCancel: () => void;
 }
 
-/** Vertical fader made from a native range input (keyboard + wheel accessible). */
+const FADER_STEPS = 1000;
+const THUMB_H = 14; // keep in sync with .lp-fader::-webkit-slider-thumb
+const SCALE: { db: number; label: string }[] = [
+  { db: 8, label: "+8" },
+  { db: 4, label: "+4" },
+  { db: 0, label: "0" },
+  { db: -6, label: "6" },
+  { db: -12, label: "12" },
+  { db: -20, label: "20" },
+  { db: -40, label: "40" },
+  { db: MIN_DB, label: "∞" },
+];
+
+/** Where a dB value sits on the fader, in px from the bottom (thumb centre). */
+function scaleBottom(db: number): number {
+  return THUMB_H / 2 + dbToFader(db) * (FADER_H - THUMB_H);
+}
+
+/** dB marks next to the fader (0 dB in the middle). */
+function FaderScale() {
+  return (
+    <div className="relative w-4" style={{ height: FADER_H }} aria-hidden>
+      {SCALE.map((m) => (
+        <span
+          key={m.db}
+          className={`absolute right-0 translate-y-1/2 font-mono text-[8px] leading-none ${m.db === 0 ? "font-bold text-ink-100" : "text-ink-400"}`}
+          style={{ bottom: scaleBottom(m.db) }}
+        >
+          {m.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+const clampDb = (db: number) => Math.round(Math.min(MAX_DB, Math.max(MIN_DB, db)) * 10) / 10;
+
+/**
+ * Vertical fader made from a native range input, with a console curve (0 dB in
+ * the middle). Wheel and arrow keys move 0.5 dB, Page Up/Down 3 dB.
+ */
 function Fader({ value, onChange, label }: { value: number; onChange: (db: number) => void; label: string }) {
   const style: CSSProperties = { writingMode: "vertical-lr", direction: "rtl", height: FADER_H, width: 22 };
+  const nudge = (delta: number) => onChange(clampDb((value <= MIN_DB && delta > 0 ? -45 : value) + delta));
   return (
-    <input
-      type="range"
-      aria-label={label}
-      min={MIN_DB}
-      max={MAX_DB}
-      step={0.5}
-      value={value}
-      onChange={(e) => onChange(Number(e.target.value))}
-      onDoubleClick={() => onChange(0)}
-      onWheel={(e) => onChange(Math.min(MAX_DB, Math.max(MIN_DB, value + (e.deltaY < 0 ? 0.5 : -0.5))))}
-      title="Doble clic: 0 dB"
-      className="lp-fader cursor-ns-resize accent-ink-100"
-      style={style}
-    />
+    <div className="relative">
+      <div
+        className="pointer-events-none absolute left-0 right-0 h-px bg-ink-500"
+        style={{ bottom: scaleBottom(0) }}
+        aria-hidden
+      />
+      <input
+        type="range"
+        aria-label={label}
+        aria-valuetext={formatDb(value)}
+        min={0}
+        max={FADER_STEPS}
+        step={1}
+        value={Math.round(dbToFader(value) * FADER_STEPS)}
+        onChange={(e) => onChange(faderToDb(Number(e.target.value) / FADER_STEPS))}
+        onDoubleClick={() => onChange(0)}
+        onWheel={(e) => nudge(e.deltaY < 0 ? 0.5 : -0.5)}
+        onKeyDown={(e) => {
+          const step = { ArrowUp: 0.5, ArrowRight: 0.5, ArrowDown: -0.5, ArrowLeft: -0.5, PageUp: 3, PageDown: -3 }[e.key];
+          if (step !== undefined) {
+            e.preventDefault();
+            nudge(step);
+          } else if (e.key === "Home" || e.key === "End") {
+            e.preventDefault();
+            onChange(e.key === "End" ? MAX_DB : MIN_DB);
+          }
+        }}
+        title="Doble clic: 0 dB"
+        className="lp-fader relative cursor-ns-resize accent-ink-100"
+        style={style}
+      />
+    </div>
   );
 }
 
@@ -153,7 +212,8 @@ function Strip({ name, color, db, onDb, read, badge, mute, solo, onMute, onSolo,
         {badge === "monitor" ? "Banda" : "PA"}
       </span>
       <DbReadout value={db} onCommit={onDb} name={name} />
-      <div className="flex items-end gap-1.5">
+      <div className="flex items-end gap-1">
+        <FaderScale />
         <Fader value={db} onChange={onDb} label={`Volumen de ${name}`} />
         <Meter read={read} height={FADER_H} barWidth={wide ? 7 : 5} />
       </div>

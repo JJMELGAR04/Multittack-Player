@@ -27,6 +27,7 @@ Leyenda: ✅ Implementado y probado
 |---|---|---|
 | Volumen, mute y solo de cada pista **se guardan con la canción** y se restauran al abrirla | ✅ | Prueba de base de datos + E2E (−6,5 dB y mute guardados; vuelven al reabrir desde la biblioteca) |
 | Faders de pista, PA y banda hasta **+8,0 dB** (el motor admite hasta +12 dB de margen; el limitador protege la salida) | ✅ | E2E: escribir +12 queda en +8,0 |
+| **Curva de fader tipo consola**: el 0 dB está a la mitad de la tira (mitad superior 0…+8 dB, inferior −60…0 dB, con más recorrido en −20…0), escala de dB junto al fader, retén en 0 dB; rueda y flechas mueven 0,5 dB, Re Pág/Av Pág 3 dB | ✅ | Prueba de UI (curva ida y vuelta, monótona) + E2E (0 dB en 500/1000) |
 | **Doble clic en el número de dB para escribirlo**: acepta coma o punto, signo, «-inf»; Enter aplica, Esc cancela | ✅ | 11 casos en prueba de UI + E2E |
 | Volumen del PA guardado (ya no vuelve a 0 dB al reiniciar) | ✅ | |
 | **Biblioteca** en *Songs*: título, BPM (de reproducción y original), compás, duración, pistas, partes, última apertura | ✅ | Captura E2E `07-library.png` |
@@ -41,10 +42,10 @@ Leyenda: ✅ Implementado y probado
 | Suite | Resultado |
 |---|---|
 | Typecheck | ✅ 0 errores |
-| UI (Vitest) | ✅ 30/30 |
+| UI (Vitest) | ✅ 31/31 |
 | Motor C++ (ABI, audio, sincronía, rendimiento, análisis) | ✅ 3/3 suites |
 | Rust (`liveplayer-db` 13, `liveplayer-engine` 2, `liveplayer-desktop` 4) | ✅ |
-| E2E sobre la app real | ✅ **57/57** (silenciosa; carpeta de datos aislada) |
+| E2E sobre la app real | ✅ **58/58** (silenciosa; carpeta de datos aislada) |
 
 ### Errores encontrados y corregidos durante la fase
 - La prueba E2E intentaba escribir en el mezclador mientras la canción reabierta aún cargaba → ahora espera a que el mezclador esté listo (fallo de la prueba, no de la app).
