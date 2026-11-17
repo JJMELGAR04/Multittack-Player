@@ -16,6 +16,8 @@ struct TrackRequest
 {
     std::string path;
     std::string name;
+    int role = -1; // TrackRoleCode, -1 = infer from the name
+    int bus = -1;  // BusCode, -1 = click/guide -> monitor, music -> main
 };
 
 /** Gapless information of an MP3 written by LAME / FFmpeg ("Info"/"Xing" + LAME tag). */
@@ -75,6 +77,12 @@ private:
     std::vector<juce::uint8> mixPeaks;
     std::string error;
 };
+
+/** Sample peak of the stereo sum of the tracks routed to `bus` (mono tracks at -3 dB). */
+float computeBusPeak (const SongData& song, const std::vector<int>& buses, int bus);
+
+/** Overview of the musical tracks (roles[i] == roleMusic); all tracks if none is musical. */
+std::vector<juce::uint8> computeMixPeaks (const SongData& song, const std::vector<int>& roles);
 
 /** Peak overview (0..255 linear) with `hop` samples per bucket. */
 std::vector<juce::uint8> computePeaks (const juce::AudioBuffer<float>& audio, int hop, float gain = 1.0f);

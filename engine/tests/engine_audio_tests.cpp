@@ -3,6 +3,7 @@
 // Usage: liveplayer_engine_audio_tests <test-audio-dir>
 
 #include "Analysis.h"
+#include "Limiter.h"
 #include "Player.h"
 #include "SongLoader.h"
 #include "SongRenderer.h"
@@ -13,6 +14,7 @@
 #include <cmath>
 #include <cstdio>
 #include <map>
+#include <tuple>
 #include <string>
 #include <vector>
 
@@ -299,7 +301,7 @@ static void testAnalysis()
     if (song == nullptr) { CHECK (false); return; }
 
     auto t0 = std::chrono::steady_clock::now();
-    const auto input = analysis::prepareInput (*song);
+    const auto input = analysis::prepareInput (*song, {});
     const auto tempo = analysis::detectTempo (input);
     std::printf ("  with click: %.2f BPM (true %.0f), confidence %.2f, source %s, downbeat %.3f s\n",
                  tempo.bpm, trueBpm, tempo.confidence, tempo.source.c_str(), tempo.downbeatOffsetSec);
@@ -311,7 +313,7 @@ static void testAnalysis()
     // Same song without the click track: tempo from the music itself.
     auto noClick = std::make_shared<SongData> (*song);
     noClick->tracks.pop_back();
-    const auto inputNoClick = analysis::prepareInput (*noClick);
+    const auto inputNoClick = analysis::prepareInput (*noClick, {});
     const auto tempo2 = analysis::detectTempo (inputNoClick);
     std::printf ("  without click: %.2f BPM, confidence %.2f, downbeat %.3f s\n", tempo2.bpm, tempo2.confidence, tempo2.downbeatOffsetSec);
     CHECK (tempo2.valid && std::abs (tempo2.bpm - trueBpm) < 0.1);
@@ -353,8 +355,9 @@ static void testAnalysis()
 class FakeDevice final : public juce::AudioIODevice
 {
 public:
-    FakeDevice() : juce::AudioIODevice ("Fake", "Fake") {}
-    juce::StringArray getOutputChannelNames() override { return { "L", "R" }; }
+    explicit FakeDevice (int outputs = 2) : juce::AudioIODevice ("Fake", "Fake"), numOutputs (outputs) {}
+    int numOutputs;
+    juce::StringArray getOutputChannelNames() override { return { "1", "2", "3", "4" }; }
     juce::StringArray getInputChannelNames() override { return {}; }
     juce::Array<double> getAvailableSampleRates() override { return { engineRate }; }
     juce::Array<int> getAvailableBufferSizes() override { return { 480 }; }
@@ -369,7 +372,7 @@ public:
     int getCurrentBufferSizeSamples() override { return 480; }
     double getCurrentSampleRate() override { return engineRate; }
     int getCurrentBitDepth() override { return 32; }
-    juce::BigInteger getActiveOutputChannels() const override { return 3; }
+    juce::BigInteger getActiveOutputChannels() const override { juce::BigInteger b; b.setRange (0, numOutputs, true); return b; }
     juce::BigInteger getActiveInputChannels() const override { return 0; }
     int getOutputLatencyInSamples() override { return 0; }
     int getInputLatencyInSamples() override { return 0; }
@@ -485,6 +488,124 @@ static void testPlayerTransport()
     player.setSong (nullptr);
 }
 
+static void testOutputRouting()
+{
+    std::printf ("[player] output buses: instruments vs click/cues\n");
+    auto dc = [] (float v) {
+        juce::AudioBuffer<float> b (2, (int) (4.0 * engineRate));
+        for (int c = 0; c < 2; ++c)
+            juce::FloatVectorOperations::fill (b.getWritePointer (c), v, b.getNumSamples());
+        return b;
+    };
+    auto song = std::make_shared<SongData>();
+    song->sampleRate = engineRate;
+    for (auto [name, value, bus] : { std::tuple<const char*, float, int> { "Keys", 0.5f, busMain }, { "Click", 0.25f, busMonitor } })
+    {
+        TrackData t;
+        t.name = name;
+        t.audio = dc (value);
+        t.bus = bus;
+        song->lengthSamples = t.audio.getNumSamples();
+        song->tracks.push_back (std::move (t));
+    }
+
+    Player player;
+    FakeDevice device (4);
+    player.setSong (song);
+    player.audioDeviceAboutToStart (&device);
+    juce::AudioBuffer<float> block (4, 480);
+    auto run = [&] (double seconds) {
+        for (int b = 0; b < (int) (seconds * engineRate / 480); ++b)
+        {
+            player.audioDeviceIOCallbackWithContext (nullptr, 0, block.getArrayOfWritePointers(), 4, 480, {});
+            juce::Thread::sleep (8);
+        }
+    };
+    auto last = [&] (int ch) { return block.getSample (ch, 479); };
+
+    player.play();
+    run (0.3);
+    std::printf ("  stereo: out1 %.3f out2 %.3f out3 %.3f out4 %.3f\n", last (0), last (1), last (2), last (3));
+    CHECK (std::abs (last (0) - 0.75f) < 1e-5f && std::abs (last (1) - 0.75f) < 1e-5f && last (2) == 0.0f);
+
+    player.setOutputMode (1);
+    run (0.05);
+    std::printf ("  split:  out1 %.3f (instruments) out2 %.3f (click)\n", last (0), last (1));
+    CHECK (std::abs (last (0) - 0.5f) < 1e-5f && std::abs (last (1) - 0.25f) < 1e-5f);
+
+    player.setOutputMode (2);
+    run (0.05);
+    std::printf ("  4 ch:   out1/2 %.3f %.3f  out3/4 %.3f %.3f\n", last (0), last (1), last (2), last (3));
+    CHECK (std::abs (last (0) - 0.5f) < 1e-5f && std::abs (last (1) - 0.5f) < 1e-5f);
+    CHECK (std::abs (last (2) - 0.25f) < 1e-5f && std::abs (last (3) - 0.25f) < 1e-5f);
+
+    // Monitor volume only affects the click bus.
+    player.setMonitorGain (0.5f);
+    run (0.2);
+    CHECK (std::abs (last (0) - 0.5f) < 1e-5f && std::abs (last (2) - 0.125f) < 1e-5f);
+
+    // Solo preview: muting a track ramps (no step) and silences only that track.
+    player.setTrackGain (0, 0.0f);
+    player.audioDeviceIOCallbackWithContext (nullptr, 0, block.getArrayOfWritePointers(), 4, 480, {});
+    const float firstAfter = block.getSample (0, 0), mid = block.getSample (0, 240);
+    std::printf ("  track gain 1 -> 0: first sample %.4f, after 5 ms %.4f\n", firstAfter, mid);
+    CHECK (firstAfter > 0.49f && mid > 0.2f && mid < 0.3f);
+    run (0.05);
+    CHECK (last (0) == 0.0f && std::abs (last (2) - 0.125f) < 1e-5f);
+
+    // Moving the click to the main bus takes effect immediately.
+    player.setTrackBus (1, busMain);
+    run (0.02);
+    CHECK (std::abs (last (0) - 0.25f) < 1e-5f && last (2) == 0.0f);
+
+    // A 2-output device ignores the 4-channel mode (falls back to stereo).
+    FakeDevice stereo (2);
+    player.audioDeviceStopped();
+    player.audioDeviceAboutToStart (&stereo);
+    CHECK (player.getOutputChannels() == 2);
+    player.audioDeviceStopped();
+    player.setSong (nullptr);
+}
+
+static void testLimiter()
+{
+    std::printf ("[limiter] safety limiter never exceeds -0.5 dBFS and is transparent below it\n");
+    Limiter lim;
+    lim.prepare (engineRate, 48);
+    const int n = (int) engineRate * 2;
+    std::vector<float> l ((size_t) n), r ((size_t) n), inL ((size_t) n);
+    for (int i = 0; i < n; ++i)
+    {
+        // 220 Hz at -12 dBFS with +6 dBFS bursts (like summed, normalised stems).
+        const double t = i / engineRate;
+        const float amp = (std::fmod (t, 0.25) < 0.02) ? 2.0f : 0.25f;
+        l[(size_t) i] = r[(size_t) i] = inL[(size_t) i] = amp * (float) std::sin (2.0 * juce::MathConstants<double>::pi * 220.0 * t);
+    }
+    for (int i = 0; i < n; i += 256)
+        lim.process (l.data() + i, r.data() + i, std::min (256, n - i));
+    float maxOut = 0.0f, maxStep = 0.0f;
+    for (int i = 1; i < n; ++i)
+    {
+        maxOut = std::max (maxOut, std::abs (l[(size_t) i]));
+        maxStep = std::max (maxStep, std::abs (l[(size_t) i] - l[(size_t) i - 1]));
+    }
+    std::printf ("  +6 dBFS bursts: output peak %.2f dBFS (ceiling -0.50)\n", 20.0 * std::log10 (maxOut));
+    CHECK (maxOut <= 0.9441f);
+
+    // Quiet material passes untouched (only delayed by latency()).
+    Limiter clean;
+    clean.prepare (engineRate, 48);
+    std::vector<float> a ((size_t) n), b ((size_t) n), src ((size_t) n);
+    for (int i = 0; i < n; ++i)
+        a[(size_t) i] = b[(size_t) i] = src[(size_t) i] = 0.5f * (float) std::sin (0.01 * i);
+    clean.process (a.data(), b.data(), n);
+    bool exact = true;
+    for (int i = clean.latency(); i < n; ++i)
+        exact &= a[(size_t) i] == src[(size_t) (i - clean.latency())];
+    CHECK (exact);
+    CHECK (clean.takeMinGain() == 1.0f);
+}
+
 static void testMp3GaplessParser()
 {
     std::printf ("[mp3] LAME gapless tag parsing\n");
@@ -543,6 +664,8 @@ int main (int argc, char** argv)
     testStretchSyncAndTiming();
     testStretchQuality();
     testPlayerTransport();
+    testOutputRouting();
+    testLimiter();
     testRenderSpeed();
     testAnalysis();
 

@@ -175,6 +175,53 @@ std::vector<juce::uint8> normalisedPeaks (const juce::AudioBuffer<float>& audio,
 }
 } // namespace
 
+float computeBusPeak (const SongData& song, const std::vector<int>& buses, int bus)
+{
+    constexpr int block = 1 << 15;
+    juce::AudioBuffer<float> sum (2, block);
+    float peak = 0.0f;
+    for (juce::int64 start = 0; start < song.lengthSamples; start += block)
+    {
+        const int n = (int) juce::jmin<juce::int64> (block, song.lengthSamples - start);
+        sum.clear();
+        for (size_t i = 0; i < song.tracks.size(); ++i)
+        {
+            if ((i < buses.size() ? buses[i] : song.tracks[i].bus) != bus)
+                continue;
+            const auto& a = song.tracks[i].audio;
+            const int avail = (int) juce::jlimit<juce::int64> (0, n, a.getNumSamples() - start);
+            if (avail <= 0)
+                continue;
+            const bool mono = a.getNumChannels() == 1;
+            for (int c = 0; c < 2; ++c)
+                sum.addFrom (c, 0, a, mono ? 0 : c, (int) start, avail, mono ? 0.70710678f : 1.0f);
+        }
+        for (int c = 0; c < 2; ++c)
+            peak = juce::jmax (peak, sum.getMagnitude (c, 0, n));
+    }
+    return peak;
+}
+
+std::vector<juce::uint8> computeMixPeaks (const SongData& song, const std::vector<int>& roles)
+{
+    bool hasMusic = false;
+    for (size_t i = 0; i < song.tracks.size(); ++i)
+        hasMusic |= i >= roles.size() || roles[i] == roleMusic;
+
+    juce::AudioBuffer<float> mix (1, (int) song.lengthSamples);
+    mix.clear();
+    for (size_t i = 0; i < song.tracks.size(); ++i)
+    {
+        if (hasMusic && i < roles.size() && roles[i] != roleMusic)
+            continue;
+        const auto& t = song.tracks[i];
+        const float g = t.audio.getNumChannels() == 1 ? 1.0f : 0.5f;
+        for (int c = 0; c < t.audio.getNumChannels(); ++c)
+            mix.addFrom (0, 0, t.audio, c, 0, t.audio.getNumSamples(), g);
+    }
+    return normalisedPeaks (mix, juce::jmax (1, (int) std::lround (song.sampleRate / 100.0)));
+}
+
 //==============================================================================
 SongLoader::SongLoader (std::vector<TrackRequest> tracks, double targetSampleRate, juce::uint64 id)
     : juce::Thread ("LIVEPLAYER loader"),
@@ -230,6 +277,8 @@ bool SongLoader::decodeTrack (size_t index, TrackData& out, std::string& err)
     out.path = req.path;
     out.name = req.name.empty() ? file.getFileNameWithoutExtension().toStdString() : req.name;
     out.format = file.getFileExtension().substring (1).toUpperCase().toStdString();
+    out.role = req.role >= 0 ? req.role : (isClickTrackName (out.name) ? roleClick : isGuideTrackName (out.name) ? roleGuide : roleMusic);
+    out.bus = req.bus >= 0 ? req.bus : (out.role == roleMusic ? busMain : busMonitor);
 
     if (! file.existsAsFile())
     {
@@ -387,21 +436,10 @@ void SongLoader::run()
     for (const auto& t : data->tracks)
         peaks.push_back (normalisedPeaks (t.audio, hop));
 
-    bool hasMusic = false;
+    std::vector<int> roles;
     for (const auto& t : data->tracks)
-        hasMusic |= ! isClickTrackName (t.name) && ! isGuideTrackName (t.name);
-
-    juce::AudioBuffer<float> mix (1, (int) data->lengthSamples);
-    mix.clear();
-    for (const auto& t : data->tracks)
-    {
-        if (hasMusic && (isClickTrackName (t.name) || isGuideTrackName (t.name)))
-            continue;
-        const float g = t.audio.getNumChannels() == 1 ? 1.0f : 0.5f;
-        for (int c = 0; c < t.audio.getNumChannels(); ++c)
-            mix.addFrom (0, 0, t.audio, c, 0, t.audio.getNumSamples(), g);
-    }
-    auto mixOverview = normalisedPeaks (mix, hop);
+        roles.push_back (t.role);
+    auto mixOverview = computeMixPeaks (*data, roles);
 
     {
         std::scoped_lock lock (mutex);

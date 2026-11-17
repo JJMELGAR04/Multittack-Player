@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ChunkRing.h"
+#include "Limiter.h"
 #include "SongRenderer.h"
 
 #include <juce_audio_devices/juce_audio_devices.h>
@@ -41,6 +42,24 @@ public:
     void setMasterGain (float gain) { masterGainTarget.store (gain); }
     void setTempoRatio (double ratio);
 
+    /** Output routing. Mode 0: everything on 1/2 (rehearsal). Mode 1: instruments
+        mono on output 1, click/cues mono on output 2. Mode 2: instruments on 1/2,
+        click/cues on 3/4 (needs 4 outputs; falls back to mode 0 otherwise). */
+    void setOutputMode (int mode) { outputMode.store (juce::jlimit (0, 2, mode)); }
+    /** Volume of the monitor bus (click / cues), linear. */
+    void setMonitorGain (float gain) { monitorGainTarget.store (gain); }
+    void setTrackBus (int track, int bus);
+    /** Per-track gain (used for solo preview), smoothed over ~10 ms. */
+    void setTrackGain (int track, float gain);
+    /** Per-song level trim of each bus (headroom so the summed stems never clip). */
+    void setBusTrims (float mainBusTrim, float monitorBusTrim)
+    {
+        mainTrimTarget.store (mainBusTrim);
+        monitorTrimTarget.store (monitorBusTrim);
+    }
+    int getNumTracks() const noexcept { return numTracks; }
+    int getOutputChannels() const noexcept { return outputChannels.load(); }
+
     struct Snapshot
     {
         int playState = 0; // 0 stopped, 1 playing, 2 paused
@@ -53,6 +72,11 @@ public:
         double renderLoad = 0.0;
         juce::uint64 underruns = 0;
         bool sampleRateMismatch = false;
+        int outputMode = 0;
+        int outputChannels = 0;
+        double monitorGain = 1.0;
+        double mainLimiterGain = 1.0;    // 1 = limiter idle
+        double monitorLimiterGain = 1.0;
     };
     Snapshot snapshot() const;
 
@@ -73,7 +97,7 @@ private:
 
     void discardStaleChunks() noexcept;
     void beginFadeOut (AfterFade after) noexcept;
-    int renderSubBlock (float* left, float* right, int numSamples) noexcept;
+    int renderSubBlock (float* const* outputs, int numOutputs, int offset, int numSamples) noexcept;
 
     void finishFadeOut() noexcept;
 
@@ -111,7 +135,21 @@ private:
     float fadeGain = 0.0f; // transport fade 0..1
     float fadeStep = 0.0f;
     juce::LinearSmoothedValue<float> masterGain { 1.0f };
-    juce::HeapBlock<float> gainScratch;
+    juce::LinearSmoothedValue<float> monitorGain { 1.0f };
+    juce::HeapBlock<float> gainScratch, monitorScratch, rampScratch;
+    juce::AudioBuffer<float> busScratch { 4, ChunkRing::chunkFrames }; // main L/R, monitor L/R
+
+    // Routing (control -> audio).
+    std::atomic<int> outputMode { 0 };
+    std::atomic<float> monitorGainTarget { 1.0f };
+    std::atomic<float> mainTrimTarget { 1.0f }, monitorTrimTarget { 1.0f };
+    juce::LinearSmoothedValue<float> mainTrim { 1.0f }, monitorTrim { 1.0f };
+    Limiter mainLimiter, monitorLimiter;
+    std::atomic<float> mainLimiterGain { 1.0f }, monitorLimiterGain { 1.0f };
+    std::atomic<int> outputChannels { 0 };
+    std::unique_ptr<std::atomic<int>[]> trackBus;
+    std::unique_ptr<std::atomic<float>[]> trackGainTarget;
+    std::vector<float> trackGain; // audio thread
 };
 
 } // namespace liveplayer

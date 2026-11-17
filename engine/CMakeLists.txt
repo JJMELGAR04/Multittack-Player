@@ -77,6 +77,7 @@ add_library(liveplayer_engine STATIC
     src/SongLoader.h
     src/SongData.h
     src/ChunkRing.h
+    src/Limiter.h
     src/Analysis.cpp
     src/Analysis.h
     ${r8brain_SOURCE_DIR}/r8bbase.cpp)
@@ -160,6 +161,16 @@ if(LIVEPLAYER_ENGINE_BUILD_TESTS)
         target_compile_definitions(liveplayer_engine_audio_tests PRIVATE $<TARGET_PROPERTY:juce::${module},INTERFACE_COMPILE_DEFINITIONS>)
     endforeach()
     target_link_libraries(liveplayer_engine_audio_tests PRIVATE liveplayer_engine)
+
+    # Developer tool: inspect real songs with the engine (not a test).
+    add_executable(liveplayer_inspect tests/inspect_song.cpp)
+    target_include_directories(liveplayer_inspect PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_include_directories(liveplayer_inspect SYSTEM PRIVATE ${r8brain_SOURCE_DIR})
+    get_target_property(_lp_test_defs liveplayer_engine_audio_tests COMPILE_DEFINITIONS)
+    get_target_property(_lp_test_incs liveplayer_engine_audio_tests INCLUDE_DIRECTORIES)
+    target_compile_definitions(liveplayer_inspect PRIVATE ${_lp_test_defs})
+    target_include_directories(liveplayer_inspect SYSTEM PRIVATE ${_lp_test_incs})
+    target_link_libraries(liveplayer_inspect PRIVATE liveplayer_engine)
 
     set(LIVEPLAYER_TEST_AUDIO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../test-audio")
     find_program(NODE_EXECUTABLE node)

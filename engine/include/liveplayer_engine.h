@@ -29,7 +29,7 @@
 extern "C" {
 #endif
 
-#define LP_ENGINE_ABI_VERSION 2u
+#define LP_ENGINE_ABI_VERSION 3u
 
 typedef struct lp_engine lp_engine;
 
@@ -86,7 +86,8 @@ lp_result lp_engine_describe_audio_devices(lp_engine* engine, char* buffer, size
 /* ---- Audio output device (phase 2: system default output) ---- */
 
 /**
- * Opens the system's default output device if it is not open yet.
+ * Opens the system's default output device (up to 4 output channels) if it
+ * is not open yet.
  * Idempotent. On failure returns LP_ERR_INTERNAL and sets the last error.
  */
 lp_result lp_engine_open_default_output(lp_engine* engine);
@@ -94,7 +95,7 @@ lp_result lp_engine_open_default_output(lp_engine* engine);
 /**
  * JSON describing the open output device:
  *   {"open":true,"typeName":"Windows Audio","deviceName":"...",
- *    "sampleRate":48000,"bufferSize":480,"outputLatencyMs":20.0}
+ *    "sampleRate":48000,"bufferSize":480,"outputChannels":2,"outputLatencyMs":20.0}
  * ("open":false and no other fields when no device is open.)
  */
 lp_result lp_engine_get_output_info(lp_engine* engine, char* buffer, size_t capacity, size_t* out_required);
@@ -103,7 +104,12 @@ lp_result lp_engine_get_output_info(lp_engine* engine, char* buffer, size_t capa
 
 /**
  * Starts loading a multitrack song in the background. `request_json` is
- *   {"tracks":[{"path":"C:\\...\\Drums.wav","name":"Drums"}, ...]}
+ *   {"tracks":[{"path":"C:\\...\\Drums.wav","name":"Drums",
+ *               "role":"music|click|guide","bus":"main|monitor"}, ...],
+ *    "bpm":72,"beatsPerBar":4}
+ * "role"/"bus" are optional (inferred from the name; click/guide -> monitor).
+ * "bpm" (optional, > 0) is a tempo known by the user: the analysis then only
+ * estimates the bar grid. "beatsPerBar" (default 4) sets the bar length.
  * Supported formats: WAV, MP3, AIFF, FLAC, Ogg Vorbis. Every file is decoded
  * into RAM and converted to the device sample rate with a high-quality
  * resampler, so playback never touches the disk.
@@ -118,12 +124,14 @@ lp_result lp_engine_load_song(lp_engine* engine, const char* request_json);
  *   {"state":"idle|loading|ready|error","progress":0.0-1.0,"error":"",
  *    "loadId":3,
  *    "song":{"sampleRate":48000,"durationSec":215.3,"memoryMB":512.0,
+ *            "beatsPerBar":4,"mainTrimDb":-7.1,"monitorTrimDb":0.0,
  *            "tracks":[{"name":"Drums","path":"...","format":"WAV",
  *                       "sourceSampleRate":44100,"channels":2,
- *                       "durationSec":215.3,"resampled":true}]},
+ *                       "durationSec":215.3,"resampled":true,
+ *                       "role":"music","bus":"main"}]},
  *    "analysis":{"state":"pending|running|done|error","revision":1,
  *                "tempo":{"bpm":72.0,"confidence":0.9,"beatOffsetSec":0.41,
- *                         "downbeatOffsetSec":0.41,"source":"click|mix"},
+ *                         "downbeatOffsetSec":0.41,"source":"click|mix|user"},
  *                "sections":[{"startSec":0,"endSec":12.5,"kind":"intro",
  *                             "label":"Intro","confidence":0.6}]}}
  * Must be polled from the control thread: it also installs a freshly loaded
@@ -141,11 +149,42 @@ lp_result lp_engine_get_song_status(lp_engine* engine, char* buffer, size_t capa
 lp_result lp_engine_get_peaks(lp_engine* engine, int32_t track, uint8_t* buffer, size_t capacity, size_t* out_required);
 
 /**
- * Re-runs section detection in the background using a user-confirmed tempo
- * (bpm > 0) and bar grid start (downbeat_offset_sec >= 0). Pass bpm <= 0 to
- * use the detected tempo. The analysis "revision" increases when done.
+ * Re-runs section detection in the background.
+ *  - bpm > 0 and downbeat_offset_sec >= 0: fully user-confirmed grid;
+ *  - bpm > 0 and downbeat_offset_sec < 0: known tempo, the bar grid is estimated;
+ *  - bpm <= 0: detected tempo.
+ * beats_per_bar (1..16) sets the bar length. The analysis "revision"
+ * increases when done.
  */
-lp_result lp_engine_detect_sections(lp_engine* engine, double bpm, double downbeat_offset_sec);
+lp_result lp_engine_detect_sections(lp_engine* engine, double bpm, double downbeat_offset_sec, int32_t beats_per_bar);
+
+/* ---- Tracks and output routing ---- */
+
+typedef enum lp_bus {
+    LP_BUS_MAIN = 0,    /* instruments: front-of-house / main outputs */
+    LP_BUS_MONITOR = 1  /* click and cues: band in-ear monitors only */
+} lp_bus;
+
+typedef enum lp_track_role {
+    LP_ROLE_MUSIC = 0,
+    LP_ROLE_CLICK = 1,
+    LP_ROLE_GUIDE = 2  /* spoken cues / guide */
+} lp_track_role;
+
+typedef enum lp_output_mode {
+    LP_OUTPUT_STEREO = 0, /* everything on outputs 1/2 (rehearsal, headphones) */
+    LP_OUTPUT_SPLIT = 1,  /* instruments mono on output 1, click + cues mono on output 2 */
+    LP_OUTPUT_QUAD = 2    /* instruments on 1/2, click + cues on 3/4 (needs 4 outputs) */
+} lp_output_mode;
+
+/** Sets a track's output bus and analysis role (takes effect immediately). */
+lp_result lp_engine_set_track_route(lp_engine* engine, int32_t track, int32_t bus, int32_t role);
+/** Per-track gain 0..2, smoothed (~10 ms). Used to audition a single track. */
+lp_result lp_engine_set_track_gain(lp_engine* engine, int32_t track, double gain);
+/** LP_ERR_INVALID_STATE if LP_OUTPUT_QUAD is requested on a device with < 4 outputs. */
+lp_result lp_engine_set_output_mode(lp_engine* engine, int32_t mode);
+/** Volume of the monitor bus (click + cues), linear 0..2. Smoothed. */
+lp_result lp_engine_set_monitor_gain(lp_engine* engine, double gain);
 
 /* ---- Transport ---- */
 
@@ -167,6 +206,11 @@ typedef struct lp_transport_state {
     double audio_load;       /* 0..1, audio callback CPU usage */
     double render_load;      /* 0..1 of one core, background render thread */
     uint64_t underruns;      /* times the render thread could not keep up (must stay 0) */
+    int32_t output_mode;     /* lp_output_mode */
+    int32_t output_channels; /* active output channels of the device */
+    double monitor_gain;     /* linear */
+    double main_limiter_gain;    /* safety limiter gain on the instruments bus (1 = idle) */
+    double monitor_limiter_gain; /* same for the click / cues bus */
 } lp_transport_state;
 
 /** Starts or resumes playback (from 0 if the song had ended). Click-free fade in. */

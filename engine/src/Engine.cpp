@@ -1,5 +1,7 @@
 #include "Engine.h"
 
+#include <cmath>
+
 namespace liveplayer
 {
 
@@ -7,8 +9,9 @@ namespace liveplayer
 class Engine::AnalysisJob final : public juce::Thread
 {
 public:
-    AnalysisJob (SongPtr s, double bpm, double downbeat)
-        : juce::Thread ("LIVEPLAYER analysis"), song (std::move (s)), bpmOverride (bpm), downbeatOverride (downbeat)
+    AnalysisJob (SongPtr s, std::vector<analysis::TrackRole> r, double bpm, double downbeat, int beats)
+        : juce::Thread ("LIVEPLAYER analysis"), song (std::move (s)), roles (std::move (r)),
+          bpmOverride (bpm), downbeatOverride (downbeat), beatsPerBar (beats)
     {
     }
 
@@ -18,12 +21,20 @@ public:
     {
         try
         {
-            const auto input = analysis::prepareInput (*song);
+            const auto input = analysis::prepareInput (*song, roles);
             if (threadShouldExit())
                 return;
 
             analysis::Tempo tempo;
-            if (bpmOverride > 0.0)
+            if (bpmOverride > 0.0 && downbeatOverride < 0.0)
+            {
+                // Known tempo: only the beat phase and the first bar line are estimated.
+                tempo = analysis::alignTempo (input, bpmOverride, beatsPerBar);
+                tempo.source = "user";
+                detected = tempo;
+                hasDetected = true;
+            }
+            else if (bpmOverride > 0.0)
             {
                 tempo.valid = true;
                 tempo.bpm = bpmOverride;
@@ -34,14 +45,14 @@ public:
             }
             else
             {
-                tempo = analysis::detectTempo (input);
+                tempo = analysis::detectTempo (input, beatsPerBar);
                 detected = tempo;
                 hasDetected = true;
             }
             if (threadShouldExit())
                 return;
 
-            result = analysis::detectSections (input, tempo);
+            result = analysis::detectSections (input, tempo, beatsPerBar);
             done.store (true);
         }
         catch (const std::exception& e)
@@ -59,7 +70,9 @@ public:
 
 private:
     SongPtr song;
+    std::vector<analysis::TrackRole> roles;
     double bpmOverride, downbeatOverride;
+    int beatsPerBar;
 };
 
 //==============================================================================
@@ -105,7 +118,8 @@ bool Engine::openDefaultOutput()
     if (deviceManager.getCurrentAudioDevice() != nullptr)
         return true;
 
-    const auto err = deviceManager.initialiseWithDefaultDevices (0, 2);
+    // Up to 4 outputs: 1/2 instruments, 3/4 click + cues (when the device has them).
+    const auto err = deviceManager.initialiseWithDefaultDevices (0, 4);
     if (err.isNotEmpty() || deviceManager.getCurrentAudioDevice() == nullptr)
     {
         setLastError ("No se pudo abrir la salida de audio: "
@@ -133,13 +147,14 @@ juce::String Engine::getOutputInfoJson()
         root->setProperty ("deviceName", device->getName());
         root->setProperty ("sampleRate", rate);
         root->setProperty ("bufferSize", device->getCurrentBufferSizeSamples());
+        root->setProperty ("outputChannels", device->getActiveOutputChannels().countNumberOfSetBits());
         root->setProperty ("outputLatencyMs",
                            rate > 0 ? 1000.0 * (device->getOutputLatencyInSamples() + device->getCurrentBufferSizeSamples()) / rate : 0.0);
     }
     return juce::JSON::toString (juce::var (root), juce::JSON::FormatOptions{}.withSpacing (juce::JSON::Spacing::none));
 }
 
-bool Engine::loadSong (std::vector<TrackRequest> tracks)
+bool Engine::loadSong (std::vector<TrackRequest> tracks, double bpm, int beats)
 {
     if (tracks.empty())
     {
@@ -150,6 +165,8 @@ bool Engine::loadSong (std::vector<TrackRequest> tracks)
         return false;
 
     loader.reset(); // cancels a load in progress
+    pendingBpmHint = bpm > 0.0 ? bpm : 0.0;
+    pendingBeatsPerBar = juce::jlimit (1, 16, beats);
     currentLoadId = nextLoadId++;
     loadState = "loading";
     loadError.clear();
@@ -192,20 +209,34 @@ void Engine::harvestLoader()
                 deviceManager.addAudioCallback (&player);
 
             song = std::move (newSong); // the previous song is freed here, on the control thread
+            trackRoles.clear();
+            trackBuses.clear();
+            for (const auto& t : song->tracks)
+            {
+                trackRoles.push_back (t.role);
+                trackBuses.push_back (t.bus);
+            }
+            mixPeaksDirty = false;
+            updateBusTrims();
+            bpmHint = pendingBpmHint;
+            beatsPerBar = pendingBeatsPerBar;
             loadState = "ready";
             detectedTempo = {};
             sections.clear();
-            startAnalysis (0.0, 0.0);
+            startAnalysis (bpmHint, -1.0, beatsPerBar);
             return;
         }
     }
 }
 
-void Engine::startAnalysis (double bpmOverride, double downbeatOverride)
+void Engine::startAnalysis (double bpm, double downbeat, int beats)
 {
     analysis.reset();
     analysisState = "running";
-    analysis = std::make_unique<AnalysisJob> (song, bpmOverride, downbeatOverride);
+    std::vector<analysis::TrackRole> roles;
+    for (int r : trackRoles)
+        roles.push_back (r == roleClick ? analysis::TrackRole::click : r == roleGuide ? analysis::TrackRole::guide : analysis::TrackRole::music);
+    analysis = std::make_unique<AnalysisJob> (song, std::move (roles), bpm, downbeat, beats);
     analysis->startThread (juce::Thread::Priority::low);
 }
 
@@ -230,19 +261,75 @@ void Engine::harvestAnalysis()
     }
 }
 
-bool Engine::detectSections (double bpm, double downbeatOffsetSec)
+bool Engine::detectSections (double bpm, double downbeatOffsetSec, int beats)
 {
     if (song == nullptr)
     {
         setLastError ("No hay ninguna canción cargada.");
         return false;
     }
-    if (bpm <= 0.0 && detectedTempo.valid)
+    beatsPerBar = juce::jlimit (1, 16, beats);
+    if (bpm <= 0.0 && detectedTempo.valid && downbeatOffsetSec >= 0.0)
     {
         bpm = detectedTempo.bpm;
         downbeatOffsetSec = detectedTempo.downbeatOffsetSec;
     }
-    startAnalysis (bpm, downbeatOffsetSec);
+    if (bpm > 0.0)
+        bpmHint = bpm;
+    startAnalysis (bpm, downbeatOffsetSec, beatsPerBar);
+    return true;
+}
+
+bool Engine::setTrackRoute (int track, int bus, int role)
+{
+    if (song == nullptr || track < 0 || track >= (int) song->tracks.size())
+    {
+        setLastError ("La pista no existe.");
+        return false;
+    }
+    trackBuses[(size_t) track] = bus == busMonitor ? busMonitor : busMain;
+    trackRoles[(size_t) track] = juce::jlimit (0, 2, role);
+    player.setTrackBus (track, trackBuses[(size_t) track]);
+    mixPeaksDirty = true;
+    updateBusTrims();
+    return true;
+}
+
+void Engine::updateBusTrims()
+{
+    // Stems are often normalised one by one, so their sum can exceed 0 dBFS
+    // (and clip). Lower each bus just enough for its peak to sit at -1 dBFS.
+    // Pure gain: dynamics and tone are untouched. Never boosts.
+    constexpr float target = 0.891f; // -1 dBFS
+    auto trimFor = [&] (int bus) {
+        const float peak = computeBusPeak (*song, trackBuses, bus);
+        return peak > target ? target / peak : 1.0f;
+    };
+    mainTrim = trimFor (busMain);
+    monitorTrim = trimFor (busMonitor);
+    player.setBusTrims (mainTrim, monitorTrim);
+}
+
+bool Engine::setTrackGain (int track, float gain)
+{
+    if (song == nullptr || track < 0 || track >= (int) song->tracks.size())
+    {
+        setLastError ("La pista no existe.");
+        return false;
+    }
+    player.setTrackGain (track, gain);
+    return true;
+}
+
+bool Engine::setOutputMode (int mode)
+{
+    if (mode == 2 && player.getOutputChannels() < 4)
+    {
+        setLastError ("La salida actual solo tiene " + std::to_string (player.getOutputChannels())
+                      + " canales: el modo de 4 canales necesita una interfaz con 4 salidas o más.");
+        return false;
+    }
+    player.setOutputMode (mode);
     return true;
 }
 
@@ -274,9 +361,15 @@ juce::String Engine::getSongStatusJson()
             tr->setProperty ("channels", t.sourceChannels);
             tr->setProperty ("durationSec", (double) t.audio.getNumSamples() / song->sampleRate);
             tr->setProperty ("resampled", t.resampled);
+            const size_t idx = (size_t) tracks.size();
+            tr->setProperty ("role", juce::String (idx < trackRoles.size() ? (trackRoles[idx] == roleClick ? "click" : trackRoles[idx] == roleGuide ? "guide" : "music") : "music"));
+            tr->setProperty ("bus", juce::String (idx < trackBuses.size() && trackBuses[idx] == busMonitor ? "monitor" : "main"));
             tracks.add (juce::var (tr));
         }
         s->setProperty ("tracks", tracks);
+        s->setProperty ("beatsPerBar", beatsPerBar);
+        s->setProperty ("mainTrimDb", 20.0 * std::log10 ((double) mainTrim));
+        s->setProperty ("monitorTrimDb", 20.0 * std::log10 ((double) monitorTrim));
         root->setProperty ("song", juce::var (s));
 
         auto* a = new juce::DynamicObject();
@@ -316,6 +409,11 @@ bool Engine::getPeaks (int track, std::vector<juce::uint8>& out)
         return false;
     if (track < 0)
     {
+        if (mixPeaksDirty)
+        {
+            mixPeaks = computeMixPeaks (*song, trackRoles);
+            mixPeaksDirty = false;
+        }
         out = mixPeaks;
         return true;
     }

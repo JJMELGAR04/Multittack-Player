@@ -47,3 +47,6 @@ third_party/r8brain/
 
 # Generated test audio
 test-audio/
+
+# User music for local testing (copyrighted, never committed)
+MUSICA/

@@ -6,6 +6,8 @@
 // Usage: node tools/generate-test-song.mjs <output-dir>
 // Output: <dir>/song/{Click,Drums,Bass,Keys,Lead}.wav + <dir>/song/manifest.json
 //         <dir>/short/{Tone,Pulse}.wav (2 short stems at 48 kHz for quick tests)
+//         <dir>/Prueba 96bpm.zip (the song as a zip; the drums file is named
+//         "llmmD.wav" on purpose, to test that the user is asked what it is)
 import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -15,7 +17,7 @@ if (!outDir) {
   process.exit(2);
 }
 
-const VERSION = 3; // bump when the generated material changes
+const VERSION = 5; // bump when the generated material changes
 const SR = 44100;
 const BPM = 96;
 const BEAT = 60 / BPM;
@@ -191,11 +193,64 @@ function generateShort(dir) {
   writeWav(join(dir, "Pulse.wav"), [pulse], sr);
 }
 
+// Minimal zip writer (stored, no compression) - enough for test fixtures.
+const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+function crc32(buf) {
+  let c = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+function writeZip(path, entries) {
+  const parts = [], central = [];
+  let offset = 0;
+  for (const { name, data } of entries) {
+    const nameBuf = Buffer.from(name, "utf8");
+    const crc = crc32(data);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(0x0800, 6);
+    local.writeUInt16LE(0, 8); local.writeUInt16LE(0, 10); local.writeUInt16LE(0x21, 12); local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(data.length, 18); local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(nameBuf.length, 26); local.writeUInt16LE(0, 28);
+    parts.push(local, nameBuf, data);
+    const cen = Buffer.alloc(46);
+    cen.writeUInt32LE(0x02014b50, 0); cen.writeUInt16LE(20, 4); cen.writeUInt16LE(20, 6); cen.writeUInt16LE(0x0800, 8);
+    cen.writeUInt16LE(0, 10); cen.writeUInt16LE(0, 12); cen.writeUInt16LE(0x21, 14); cen.writeUInt32LE(crc, 16);
+    cen.writeUInt32LE(data.length, 20); cen.writeUInt32LE(data.length, 24); cen.writeUInt16LE(nameBuf.length, 28);
+    cen.writeUInt32LE(offset, 42);
+    central.push(cen, nameBuf);
+    offset += 30 + nameBuf.length + data.length;
+  }
+  const cenSize = central.reduce((a, b) => a + b.length, 0);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(entries.length, 8); end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(cenSize, 12); end.writeUInt32LE(offset, 16);
+  writeFileSync(path, Buffer.concat([...parts, ...central, end]));
+}
+
+function generateZip(dir) {
+  const song = join(dir, "song");
+  const entries = [
+    ["Click.wav", "Prueba/Click.wav"],
+    ["Drums.wav", "Prueba/llmmD.wav"], // meaningless name: the importer must ask
+    ["Bass.wav", "Prueba/Bass.wav"],
+    ["Keys.wav", "Prueba/Keys.wav"],
+    ["Lead.wav", "Prueba/Lead.wav"],
+  ].map(([src, name]) => ({ name, data: readFileSync(join(song, src)) }));
+  entries.push({ name: "__MACOSX/Prueba/._Click.wav", data: Buffer.from("junk") });
+  entries.push({ name: "Prueba/LEEME.txt", data: Buffer.from("not audio") });
+  writeZip(join(dir, "Prueba 96bpm.zip"), entries);
+}
+
 const manifest = join(outDir, "song", "manifest.json");
 if (existsSync(manifest) && JSON.parse(readFileSync(manifest, "utf8")).version === VERSION) {
   console.log(`test audio up to date in ${outDir}`);
 } else {
   generateSong(join(outDir, "song"));
   generateShort(join(outDir, "short"));
+  generateZip(outDir);
   console.log(`generated test audio in ${outDir}`);
 }

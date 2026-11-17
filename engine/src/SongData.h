@@ -18,8 +18,13 @@ struct TrackData
     int sourceSampleRate = 0;
     int sourceChannels = 0;
     bool resampled = false;
+    int role = 0; // initial role: 0 music, 1 click, 2 guide/cues
+    int bus = 0;  // initial output bus: 0 main (instruments), 1 monitor (click / cues)
     juce::AudioBuffer<float> audio; // 1 (mono) or 2 (stereo) channels
 };
+
+enum TrackRoleCode { roleMusic = 0, roleClick = 1, roleGuide = 2 };
+enum BusCode { busMain = 0, busMonitor = 1 };
 
 /** Immutable once built by the loader; shared read-only between threads. */
 struct SongData

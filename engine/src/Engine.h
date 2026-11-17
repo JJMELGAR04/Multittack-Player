@@ -40,10 +40,15 @@ public:
     bool openDefaultOutput();
     juce::String getOutputInfoJson();
 
-    bool loadSong (std::vector<TrackRequest> tracks);
+    /** bpmHint > 0: the tempo is known (user); beatsPerBar: bar length for the grid. */
+    bool loadSong (std::vector<TrackRequest> tracks, double bpmHint, int beatsPerBar);
     juce::String getSongStatusJson();
     bool getPeaks (int track, std::vector<juce::uint8>& out);
-    bool detectSections (double bpm, double downbeatOffsetSec);
+    /** downbeatOffsetSec < 0: estimate the bar grid for the given bpm. */
+    bool detectSections (double bpm, double downbeatOffsetSec, int beatsPerBar);
+    bool setTrackRoute (int track, int bus, int role);
+    bool setTrackGain (int track, float gain);
+    bool setOutputMode (int mode);
 
     Player& getPlayer() noexcept { return player; }
     bool hasSong() const noexcept { return song != nullptr; }
@@ -63,7 +68,8 @@ private:
 
     void harvestLoader();
     void harvestAnalysis();
-    void startAnalysis (double bpmOverride, double downbeatOverride);
+    void startAnalysis (double bpm, double downbeat, int beatsPerBar);
+    void updateBusTrims();
 
     juce::AudioDeviceManager deviceManager;
     Player player;
@@ -78,6 +84,12 @@ private:
     SongPtr song;
     std::vector<std::vector<juce::uint8>> trackPeaks;
     std::vector<juce::uint8> mixPeaks;
+    bool mixPeaksDirty = false;
+    std::vector<int> trackRoles; // current analysis role per track
+    std::vector<int> trackBuses; // current output bus per track
+    double pendingBpmHint = 0.0, bpmHint = 0.0;
+    int pendingBeatsPerBar = 4, beatsPerBar = 4;
+    float mainTrim = 1.0f, monitorTrim = 1.0f;
 
     std::unique_ptr<AnalysisJob> analysis;
     std::string analysisState = "pending";

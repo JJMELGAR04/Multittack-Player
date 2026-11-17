@@ -122,7 +122,16 @@ void Player::setSong (SongPtr newSong)
 
     songSampleRate = song->sampleRate;
     songLength = song->lengthSamples;
-    numTracks = (int) song->tracks.size();
+    const int n = (int) song->tracks.size();
+    trackBus = std::make_unique<std::atomic<int>[]> ((size_t) n);
+    trackGainTarget = std::make_unique<std::atomic<float>[]> ((size_t) n);
+    trackGain.assign ((size_t) n, 1.0f);
+    for (int t = 0; t < n; ++t)
+    {
+        trackBus[(size_t) t].store (song->tracks[(size_t) t].bus);
+        trackGainTarget[(size_t) t].store (1.0f);
+    }
+    numTracks = n;
     renderer.prepare (song);
     ring.prepare (numTracks * 2, ringChunks);
 
@@ -168,6 +177,18 @@ void Player::seek (double positionSec)
         renderThread->notify();
 }
 
+void Player::setTrackBus (int track, int bus)
+{
+    if (track >= 0 && track < numTracks)
+        trackBus[(size_t) track].store (bus == busMonitor ? busMonitor : busMain);
+}
+
+void Player::setTrackGain (int track, float gain)
+{
+    if (track >= 0 && track < numTracks)
+        trackGainTarget[(size_t) track].store (juce::jlimit (0.0f, 2.0f, gain));
+}
+
 void Player::setTempoRatio (double ratio)
 {
     tempoTarget.store (juce::jlimit (0.5, 2.0, ratio));
@@ -191,6 +212,11 @@ Player::Snapshot Player::snapshot() const
     s.renderLoad = renderLoad.load();
     s.underruns = underruns.load();
     s.sampleRateMismatch = sampleRateMismatch.load();
+    s.outputMode = outputMode.load();
+    s.outputChannels = outputChannels.load();
+    s.monitorGain = monitorGainTarget.load();
+    s.mainLimiterGain = mainLimiterGain.load();
+    s.monitorLimiterGain = monitorLimiterGain.load();
     return s;
 }
 
@@ -200,8 +226,20 @@ void Player::audioDeviceAboutToStart (juce::AudioIODevice* device)
     deviceSampleRate = device->getCurrentSampleRate();
     sampleRateMismatch.store (numTracks > 0 && std::abs (deviceSampleRate - songSampleRate) > 0.5);
     gainScratch.allocate ((size_t) ChunkRing::chunkFrames, true);
+    monitorScratch.allocate ((size_t) ChunkRing::chunkFrames, true);
+    rampScratch.allocate ((size_t) ChunkRing::chunkFrames, true);
     masterGain.reset (deviceSampleRate, 0.05);
     masterGain.setCurrentAndTargetValue (masterGainTarget.load());
+    monitorGain.reset (deviceSampleRate, 0.05);
+    monitorGain.setCurrentAndTargetValue (monitorGainTarget.load());
+    mainTrim.reset (deviceSampleRate, 0.2);
+    mainTrim.setCurrentAndTargetValue (mainTrimTarget.load());
+    monitorTrim.reset (deviceSampleRate, 0.2);
+    monitorTrim.setCurrentAndTargetValue (monitorTrimTarget.load());
+    const int lookahead = juce::jmax (8, (int) std::lround (0.001 * deviceSampleRate)); // 1 ms
+    mainLimiter.prepare (deviceSampleRate, lookahead);
+    monitorLimiter.prepare (deviceSampleRate, lookahead);
+    outputChannels.store (device->getActiveOutputChannels().countNumberOfSetBits());
     fadeStep = (float) (1.0 / (fadeSeconds * deviceSampleRate));
     state = State::idle;
     fadeGain = 0.0f;
@@ -243,7 +281,7 @@ void Player::finishFadeOut() noexcept
     }
 }
 
-int Player::renderSubBlock (float* left, float* right, int maxFrames) noexcept
+int Player::renderSubBlock (float* const* outputs, int numOutputs, int offset, int maxFrames) noexcept
 {
     if (state == State::idle)
         return 0;
@@ -288,6 +326,7 @@ int Player::renderSubBlock (float* left, float* right, int maxFrames) noexcept
     int frames = n;
     bool fadeOutFinished = false;
     float* gains = gainScratch.get();
+    float* monitorGains = monitorScratch.get();
 
     for (int i = 0; i < n; ++i)
     {
@@ -307,27 +346,102 @@ int Player::renderSubBlock (float* left, float* right, int maxFrames) noexcept
             {
                 fadeGain = 0.0f;
                 gains[i] = 0.0f;
+                monitorGains[i] = 0.0f;
                 frames = i + 1;
                 fadeOutFinished = true;
                 break;
             }
         }
-        gains[i] = fadeShape (fadeGain) * masterGain.getNextValue();
+        const float fade = fadeShape (fadeGain);
+        gains[i] = fade * masterGain.getNextValue() * mainTrim.getNextValue();
+        monitorGains[i] = fade * monitorGain.getNextValue() * monitorTrim.getNextValue();
     }
+
+    // 1. Sum every track into its bus (per-track gain ramps ~10 ms, never steps).
+    busScratch.clear (0, frames);
+    float* mainL = busScratch.getWritePointer (0);
+    float* mainR = busScratch.getWritePointer (1);
+    float* monL = busScratch.getWritePointer (2);
+    float* monR = busScratch.getWritePointer (3);
+    const float maxStep = (float) (1.0 / (0.01 * deviceSampleRate));
+    float* ramp = rampScratch.get();
 
     for (int t = 0; t < numTracks; ++t)
     {
+        const float target = trackGainTarget[(size_t) t].load (std::memory_order_relaxed);
+        float& current = trackGain[(size_t) t];
+        if (current == 0.0f && target == 0.0f)
+            continue;
+        const bool monitor = trackBus[(size_t) t].load (std::memory_order_relaxed) == busMonitor;
+        float* dstL = monitor ? monL : mainL;
+        float* dstR = monitor ? monR : mainR;
         const float* srcL = ring.readPointer (t * 2) + readOffset;
         const float* srcR = ring.readPointer (t * 2 + 1) + readOffset;
-        if (right != nullptr)
+
+        if (current == target)
         {
-            juce::FloatVectorOperations::addWithMultiply (left, srcL, gains, frames);
-            juce::FloatVectorOperations::addWithMultiply (right, srcR, gains, frames);
+            juce::FloatVectorOperations::addWithMultiply (dstL, srcL, current, frames);
+            juce::FloatVectorOperations::addWithMultiply (dstR, srcR, current, frames);
         }
         else
         {
             for (int i = 0; i < frames; ++i)
-                left[i] += 0.5f * (srcL[i] + srcR[i]) * gains[i];
+            {
+                current += juce::jlimit (-maxStep, maxStep, target - current);
+                ramp[i] = current;
+            }
+            juce::FloatVectorOperations::addWithMultiply (dstL, srcL, ramp, frames);
+            juce::FloatVectorOperations::addWithMultiply (dstR, srcR, ramp, frames);
+        }
+    }
+
+    // 2. Bus gains (transport fade x master / monitor volume).
+    juce::FloatVectorOperations::multiply (mainL, gains, frames);
+    juce::FloatVectorOperations::multiply (mainR, gains, frames);
+    juce::FloatVectorOperations::multiply (monL, monitorGains, frames);
+    juce::FloatVectorOperations::multiply (monR, monitorGains, frames);
+
+    // Safety limiters (-0.5 dBFS ceiling, 1 ms look-ahead, same latency on both buses).
+    mainLimiter.process (mainL, mainR, frames);
+    monitorLimiter.process (monL, monR, frames);
+
+    // 3. Map the buses to the device outputs.
+    auto out = [&] (int c) { return outputs[c] != nullptr ? outputs[c] + offset : nullptr; };
+    const int mode = outputMode.load (std::memory_order_relaxed);
+    if (numOutputs == 1)
+    {
+        if (auto* o = out (0))
+            for (int i = 0; i < frames; ++i)
+                o[i] += 0.5f * (mainL[i] + mainR[i] + monL[i] + monR[i]);
+    }
+    else if (mode == 2 && numOutputs >= 4)
+    {
+        const float* src[4] = { mainL, mainR, monL, monR };
+        for (int c = 0; c < 4; ++c)
+            if (auto* o = out (c))
+                juce::FloatVectorOperations::add (o, src[c], frames);
+    }
+    else if (mode == 1)
+    {
+        // Split: instruments (mono) to output 1, click + cues (mono) to output 2.
+        if (auto* o = out (0))
+            for (int i = 0; i < frames; ++i)
+                o[i] += 0.5f * (mainL[i] + mainR[i]);
+        if (auto* o = out (1))
+            for (int i = 0; i < frames; ++i)
+                o[i] += 0.5f * (monL[i] + monR[i]);
+    }
+    else
+    {
+        if (auto* o = out (0))
+        {
+            juce::FloatVectorOperations::add (o, mainL, frames);
+            juce::FloatVectorOperations::add (o, monL, frames);
+        }
+        if (auto* o = out (1))
+        {
+            juce::FloatVectorOperations::add (o, mainR, frames);
+            juce::FloatVectorOperations::add (o, monR, frames);
         }
     }
 
@@ -359,6 +473,9 @@ void Player::audioDeviceIOCallbackWithContext (const float* const*, int,
         return;
 
     masterGain.setTargetValue (masterGainTarget.load());
+    monitorGain.setTargetValue (monitorGainTarget.load());
+    mainTrim.setTargetValue (mainTrimTarget.load());
+    monitorTrim.setTargetValue (monitorTrimTarget.load());
 
     // 1. Seek requests.
     const auto generation = seekGeneration.load (std::memory_order_acquire);
@@ -403,20 +520,31 @@ void Player::audioDeviceIOCallbackWithContext (const float* const*, int,
     }
 
     // 3. Audio.
-    float* left = outputChannelData[0];
-    float* right = numOutputChannels > 1 ? outputChannelData[1] : nullptr;
     int done = 0;
     while (done < numSamples)
     {
-        const int n = renderSubBlock (left + done, right != nullptr ? right + done : nullptr, numSamples - done);
+        const int n = renderSubBlock (outputChannelData, numOutputChannels, done, numSamples - done);
         if (n == 0)
             break;
         done += n;
     }
 
-    // Keep the gain smoother in step even while silent.
+    // Keep the gain smoothers in step even while silent.
     if (done < numSamples)
+    {
         masterGain.skip (numSamples - done);
+        monitorGain.skip (numSamples - done);
+        mainTrim.skip (numSamples - done);
+        monitorTrim.skip (numSamples - done);
+    }
+
+    // Publish limiter activity (held lowest gain, recovers over ~0.2 s).
+    auto publish = [] (std::atomic<float>& meter, float g) {
+        const float cur = meter.load (std::memory_order_relaxed);
+        meter.store (std::min (g, cur + (1.0f - cur) * 0.05f), std::memory_order_relaxed);
+    };
+    publish (mainLimiterGain, mainLimiter.takeMinGain());
+    publish (monitorLimiterGain, monitorLimiter.takeMinGain());
 }
 
 } // namespace liveplayer

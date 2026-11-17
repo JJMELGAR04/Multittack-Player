@@ -62,7 +62,13 @@ static void testTransportWithoutSong (lp_engine* e)
     CHECK (lp_engine_play (e) == LP_ERR_INVALID_STATE);
     CHECK (lp_engine_seek (e, 1.0) == LP_ERR_INVALID_STATE);
     CHECK (lp_engine_stop (e) == LP_ERR_INVALID_STATE);
-    CHECK (lp_engine_detect_sections (e, 120.0, 0.0) == LP_ERR_INVALID_STATE);
+    CHECK (lp_engine_detect_sections (e, 120.0, 0.0, 4) == LP_ERR_INVALID_STATE);
+    CHECK (lp_engine_detect_sections (e, 120.0, 0.0, 0) == LP_ERR_INVALID_ARGUMENT);
+    CHECK (lp_engine_set_track_route (e, 0, LP_BUS_MONITOR, LP_ROLE_CLICK) == LP_ERR_INVALID_STATE);
+    CHECK (lp_engine_set_track_route (e, 0, 5, LP_ROLE_CLICK) == LP_ERR_INVALID_ARGUMENT);
+    CHECK (lp_engine_set_track_gain (e, 0, 1.0) == LP_ERR_INVALID_STATE);
+    CHECK (lp_engine_set_output_mode (e, 7) == LP_ERR_INVALID_ARGUMENT);
+    CHECK (lp_engine_set_monitor_gain (e, 0.5) == LP_OK);
     size_t required = 0;
     CHECK (lp_engine_get_peaks (e, -1, nullptr, 0, &required) == LP_ERR_INVALID_STATE);
 
@@ -74,6 +80,7 @@ static void testTransportWithoutSong (lp_engine* e)
     CHECK (lp_engine_load_song (e, nullptr) == LP_ERR_INVALID_ARGUMENT);
     CHECK (lp_engine_load_song (e, "{\"tracks\":[]}") == LP_ERR_INVALID_ARGUMENT);
     CHECK (lp_engine_load_song (e, "not json") == LP_ERR_INVALID_ARGUMENT);
+    CHECK (lp_engine_load_song (e, "{\"tracks\":[{\"path\":\"x.wav\"}],\"beatsPerBar\":40}") == LP_ERR_INVALID_ARGUMENT);
 
     lp_transport_state s {};
     CHECK (lp_engine_get_transport (e, &s) == LP_OK);

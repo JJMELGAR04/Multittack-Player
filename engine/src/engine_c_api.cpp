@@ -183,6 +183,13 @@ lp_result lp_engine_load_song (lp_engine* engine, const char* request_json)
             liveplayer::TrackRequest r;
             r.path = t.getProperty ("path", {}).toString().toStdString();
             r.name = t.getProperty ("name", {}).toString().toStdString();
+            const auto role = t.getProperty ("role", {}).toString();
+            if (role == "click") r.role = liveplayer::roleClick;
+            else if (role == "guide") r.role = liveplayer::roleGuide;
+            else if (role == "music") r.role = liveplayer::roleMusic;
+            const auto bus = t.getProperty ("bus", {}).toString();
+            if (bus == "monitor") r.bus = liveplayer::busMonitor;
+            else if (bus == "main") r.bus = liveplayer::busMain;
             if (r.path.empty())
             {
                 engine->impl.setLastError ("Solicitud inválida: pista sin \"path\"");
@@ -190,7 +197,14 @@ lp_result lp_engine_load_song (lp_engine* engine, const char* request_json)
             }
             requests.push_back (std::move (r));
         }
-        return engine->impl.loadSong (std::move (requests)) ? LP_OK : LP_ERR_INTERNAL;
+        const double bpm = parsed.getProperty ("bpm", 0.0);
+        const int beats = parsed.getProperty ("beatsPerBar", 4);
+        if (! std::isfinite (bpm) || bpm < 0.0 || bpm > 400.0 || beats < 1 || beats > 16)
+        {
+            engine->impl.setLastError ("Solicitud inválida: bpm o beatsPerBar fuera de rango");
+            return LP_ERR_INVALID_ARGUMENT;
+        }
+        return engine->impl.loadSong (std::move (requests), bpm, beats) ? LP_OK : LP_ERR_INTERNAL;
     });
 }
 
@@ -216,11 +230,43 @@ lp_result lp_engine_get_peaks (lp_engine* engine, int32_t track, uint8_t* buffer
     });
 }
 
-lp_result lp_engine_detect_sections (lp_engine* engine, double bpm, double downbeat_offset_sec)
+lp_result lp_engine_detect_sections (lp_engine* engine, double bpm, double downbeat_offset_sec, int32_t beats_per_bar)
 {
-    if (engine == nullptr || ! std::isfinite (bpm) || ! std::isfinite (downbeat_offset_sec) || bpm > 400.0)
+    if (engine == nullptr || ! std::isfinite (bpm) || ! std::isfinite (downbeat_offset_sec) || bpm > 400.0
+        || beats_per_bar < 1 || beats_per_bar > 16)
         return LP_ERR_INVALID_ARGUMENT;
-    return guarded (engine, [&] { return engine->impl.detectSections (bpm, downbeat_offset_sec) ? LP_OK : LP_ERR_INVALID_STATE; });
+    return guarded (engine, [&] { return engine->impl.detectSections (bpm, downbeat_offset_sec, beats_per_bar) ? LP_OK : LP_ERR_INVALID_STATE; });
+}
+
+lp_result lp_engine_set_track_route (lp_engine* engine, int32_t track, int32_t bus, int32_t role)
+{
+    if (engine == nullptr || bus < 0 || bus > 1 || role < 0 || role > 2)
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] { return engine->impl.setTrackRoute (track, bus, role) ? LP_OK : LP_ERR_INVALID_STATE; });
+}
+
+lp_result lp_engine_set_track_gain (lp_engine* engine, int32_t track, double gain)
+{
+    if (engine == nullptr || ! std::isfinite (gain) || gain < 0.0 || gain > 2.0)
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] { return engine->impl.setTrackGain (track, (float) gain) ? LP_OK : LP_ERR_INVALID_STATE; });
+}
+
+lp_result lp_engine_set_output_mode (lp_engine* engine, int32_t mode)
+{
+    if (engine == nullptr || mode < 0 || mode > 2)
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] { return engine->impl.setOutputMode (mode) ? LP_OK : LP_ERR_INVALID_STATE; });
+}
+
+lp_result lp_engine_set_monitor_gain (lp_engine* engine, double gain)
+{
+    if (engine == nullptr || ! std::isfinite (gain) || gain < 0.0 || gain > 2.0)
+        return LP_ERR_INVALID_ARGUMENT;
+    return guarded (engine, [&] {
+        engine->impl.getPlayer().setMonitorGain ((float) gain);
+        return LP_OK;
+    });
 }
 
 #define LP_REQUIRE_SONG(engine)                                           \
@@ -313,6 +359,11 @@ lp_result lp_engine_get_transport (lp_engine* engine, lp_transport_state* out_st
         out_state->audio_load = extras.audioLoad;
         out_state->render_load = s.renderLoad;
         out_state->underruns = s.underruns;
+        out_state->output_mode = s.outputMode;
+        out_state->output_channels = s.outputChannels;
+        out_state->monitor_gain = s.monitorGain;
+        out_state->main_limiter_gain = s.mainLimiterGain;
+        out_state->monitor_limiter_gain = s.monitorLimiterGain;
         return LP_OK;
     });
 }

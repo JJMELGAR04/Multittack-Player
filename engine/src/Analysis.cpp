@@ -334,14 +334,15 @@ Tempo tempoFromEnvelope (const std::vector<float>& env, double frameRate, double
     return tempo;
 }
 
-/** Picks which of the 4 beats is the bar's first one (4/4 assumed). */
-double chooseDownbeat (const Tempo& tempo, const Frames& onsets, const std::vector<float>& lowEnv,
+/** Picks which beat of the bar is the first one. */
+double chooseDownbeat (const Tempo& tempo, int beatsPerBar, const Frames& onsets, const std::vector<float>& lowEnv,
                        const Frames& features, const std::vector<float>& clickEnv, const Frames* clickFrames)
 {
     const double beatSec = 60.0 / tempo.bpm;
     const double durationSec = (double) onsets.size() / onsets.frameRate;
-    std::array<double, 4> score {};
-    std::array<int, 4> count {};
+    beatsPerBar = juce::jlimit (1, 16, beatsPerBar);
+    std::vector<double> score ((size_t) beatsPerBar, 0.0);
+    std::vector<int> count ((size_t) beatsPerBar, 0);
 
     auto chromaAt = [&] (double sec) -> const std::array<float, 12>* {
         const auto i = (long long) std::llround (features.frameAt (sec));
@@ -351,7 +352,7 @@ double chooseDownbeat (const Tempo& tempo, const Frames& onsets, const std::vect
     int beat = 0;
     for (double t = tempo.beatOffsetSec; t < durationSec - beatSec; t += beatSec, ++beat)
     {
-        const int phase = beat % 4;
+        const int phase = beat % beatsPerBar;
         double s = 0.0;
         if (! clickEnv.empty() && clickFrames != nullptr)
             s += 2.0 * sampleAt (clickEnv, clickFrames->frameAt (t)); // accented click on beat 1
@@ -371,7 +372,7 @@ double chooseDownbeat (const Tempo& tempo, const Frames& onsets, const std::vect
     }
 
     int bestPhase = 0;
-    for (int p = 1; p < 4; ++p)
+    for (int p = 1; p < beatsPerBar; ++p)
         if (count[(size_t) p] > 0 && score[(size_t) p] / count[(size_t) p] > score[(size_t) bestPhase] / juce::jmax (1, count[(size_t) bestPhase]))
             bestPhase = p;
     return tempo.beatOffsetSec + bestPhase * beatSec;
@@ -531,22 +532,35 @@ std::vector<double> noveltyCurve (const std::vector<std::vector<double>>& s, con
     return nov;
 }
 
-std::vector<int> pickBoundaries (const std::vector<double>& nov)
+std::vector<int> pickBoundaries (const std::vector<double>& nov, const std::vector<Bar>& bars)
 {
     const int n = (int) nov.size();
     std::vector<int> result { 0 };
     if (n < 6)
         return result;
 
-    double mean = 0.0, sq = 0.0;
-    for (double v : nov) mean += v;
-    mean /= n;
-    for (double v : nov) sq += (v - mean) * (v - mean);
-    const double sd = std::sqrt (sq / n);
+    // Robust statistics (median / MAD) over the bars that have music: the huge
+    // novelty of a fade to silence at the end must not hide the real changes.
+    double maxEnergy = -200.0;
+    for (const auto& b : bars) maxEnergy = std::max (maxEnergy, b.energyDb);
+    std::vector<double> values;
+    for (int i = 1; i < n; ++i)
+        if (bars[(size_t) i].energyDb > maxEnergy - 30.0)
+            values.push_back (nov[(size_t) i]);
+    if (values.size() < 4)
+        return result;
+    auto median = [] (std::vector<double> v) {
+        std::nth_element (v.begin(), v.begin() + (long) v.size() / 2, v.end());
+        return v[v.size() / 2];
+    };
+    const double med = median (values);
+    std::vector<double> dev;
+    for (double v : values) dev.push_back (std::abs (v - med));
+    const double sigma = std::max (1.0e-3, 1.4826 * median (dev));
 
     // Phrase grid: most sections start every 4 bars from some reference.
     std::array<double, 4> phaseScore {};
-    for (int i = 1; i < n; ++i) phaseScore[(size_t) (i % 4)] += std::max (0.0, nov[(size_t) i] - mean);
+    for (int i = 1; i < n; ++i) phaseScore[(size_t) (i % 4)] += std::min (5.0 * sigma, std::max (0.0, nov[(size_t) i] - med));
     const int phrasePhase = (int) (std::max_element (phaseScore.begin(), phaseScore.end()) - phaseScore.begin());
 
     std::vector<std::pair<double, int>> candidates;
@@ -558,8 +572,8 @@ std::vector<int> pickBoundaries (const std::vector<double>& nov)
                 isPeak = false;
         double score = nov[(size_t) i];
         if (i % 4 == phrasePhase)
-            score += 0.35 * sd;
-        if (isPeak && score > mean + 0.4 * sd)
+            score += 0.5 * sigma;
+        if (isPeak && score > med + 1.0 * sigma)
             candidates.push_back ({ score, i });
     }
     std::sort (candidates.rbegin(), candidates.rend());
@@ -777,21 +791,27 @@ void assignLabels (std::vector<Segment>& segs)
 } // namespace
 
 //==============================================================================
-Input prepareInput (const SongData& song)
+Input prepareInput (const SongData& song, const std::vector<TrackRole>& roles)
 {
     Input in;
     in.sampleRate = analysisRate;
     const auto length = (size_t) song.lengthSamples;
     std::vector<float> music (length, 0.0f), click;
 
+    auto roleOf = [&] (size_t i) {
+        if (i < roles.size()) return roles[i];
+        const auto& name = song.tracks[i].name;
+        return isClickTrackName (name) ? TrackRole::click : isGuideTrackName (name) ? TrackRole::guide : TrackRole::music;
+    };
     bool hasMusic = false;
-    for (const auto& t : song.tracks)
-        hasMusic |= ! isClickTrackName (t.name) && ! isGuideTrackName (t.name);
+    for (size_t i = 0; i < song.tracks.size(); ++i)
+        hasMusic |= roleOf (i) == TrackRole::music;
 
-    for (const auto& t : song.tracks)
+    for (size_t i = 0; i < song.tracks.size(); ++i)
     {
-        const bool isClick = isClickTrackName (t.name);
-        const bool isGuide = isGuideTrackName (t.name);
+        const auto& t = song.tracks[i];
+        const bool isClick = roleOf (i) == TrackRole::click;
+        const bool isGuide = roleOf (i) == TrackRole::guide;
         std::vector<float>* target = nullptr;
         if (isClick)
         {
@@ -815,7 +835,7 @@ Input prepareInput (const SongData& song)
     return in;
 }
 
-Tempo detectTempo (const Input& input)
+Tempo detectTempo (const Input& input, int beatsPerBar)
 {
     const auto onsets = computeFrames (input.music, onsetOrder);
     if (onsets.size() < 64)
@@ -843,12 +863,51 @@ Tempo detectTempo (const Input& input)
         return tempo;
 
     const auto features = computeFrames (input.music, featureOrder);
-    tempo.downbeatOffsetSec = chooseDownbeat (tempo, onsets, onsetEnvelope (onsets.lowFlux, onsets.frameRate), features,
+    tempo.downbeatOffsetSec = chooseDownbeat (tempo, beatsPerBar, onsets, onsetEnvelope (onsets.lowFlux, onsets.frameRate), features,
                                               clickEnv, clickEnv.empty() ? nullptr : &clickFrames);
     return tempo;
 }
 
-std::vector<Section> detectSections (const Input& input, const Tempo& tempo)
+Tempo alignTempo (const Input& input, double bpm, int beatsPerBar)
+{
+    Tempo tempo;
+    const auto onsets = computeFrames (input.music, onsetOrder);
+    if (onsets.size() < 64 || bpm <= 0.0)
+        return tempo;
+
+    // Phase from the click track when there is one, else from the music.
+    Frames clickFrames;
+    std::vector<float> clickEnv;
+    const Frames* phaseFrames = &onsets;
+    std::vector<float> env;
+    if (! input.click.empty())
+    {
+        clickFrames = computeFrames (input.click, onsetOrder);
+        clickEnv = onsetEnvelope (clickFrames.flux, clickFrames.frameRate);
+        env = clickEnv;
+        phaseFrames = &clickFrames;
+        tempo.source = "click";
+    }
+    else
+    {
+        env = onsetEnvelope (onsets.flux, onsets.frameRate);
+        tempo.source = "mix";
+    }
+
+    const auto best = combAlign (env, 60.0 / bpm * phaseFrames->frameRate);
+    tempo.valid = true;
+    tempo.bpm = bpm;
+    tempo.beatOffsetSec = best.phase / phaseFrames->frameRate + phaseFrames->timeOffsetSec;
+    while (tempo.beatOffsetSec >= 60.0 / bpm) tempo.beatOffsetSec -= 60.0 / bpm;
+    tempo.confidence = best.score > 0.0 ? juce::jlimit (0.0, 1.0, (best.score - best.meanOverPhases) / best.score * 1.5) : 0.0;
+
+    const auto features = computeFrames (input.music, featureOrder);
+    tempo.downbeatOffsetSec = chooseDownbeat (tempo, beatsPerBar, onsets, onsetEnvelope (onsets.lowFlux, onsets.frameRate), features,
+                                              clickEnv, clickEnv.empty() ? nullptr : &clickFrames);
+    return tempo;
+}
+
+std::vector<Section> detectSections (const Input& input, const Tempo& tempo, int beatsPerBar)
 {
     const double durationSec = (double) input.music.size() / input.sampleRate;
     const auto frames = computeFrames (input.music);
@@ -857,14 +916,14 @@ std::vector<Section> detectSections (const Input& input, const Tempo& tempo)
 
     // Bars of 4 beats. Without a tempo, use 2-second blocks.
     const bool haveTempo = tempo.valid && tempo.bpm > 30.0;
-    const double barSec = haveTempo ? 4.0 * 60.0 / tempo.bpm : 2.0;
+    const double barSec = haveTempo ? juce::jlimit (1, 16, beatsPerBar) * 60.0 / tempo.bpm : 2.0;
     auto bars = makeBars (frames, durationSec, barSec, haveTempo ? tempo.downbeatOffsetSec : 0.0);
     if (bars.size() < 6)
         return {};
 
     auto sim = similarityMatrix (bars);
     const auto novelty = noveltyCurve (sim, bars);
-    const auto bounds = pickBoundaries (novelty);
+    const auto bounds = pickBoundaries (novelty, bars);
     if (juce::SystemStats::getEnvironmentVariable ("LIVEPLAYER_DEBUG_ANALYSIS", {}).isNotEmpty())
     {
         for (size_t b = 0; b < bars.size(); ++b)

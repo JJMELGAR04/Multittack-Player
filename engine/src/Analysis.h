@@ -35,9 +35,16 @@ struct Section
     double confidence = 0.0;
 };
 
-Input prepareInput (const SongData& song);
-Tempo detectTempo (const Input& input);
-/** `tempo` may come from detectTempo() or be user-confirmed. */
-std::vector<Section> detectSections (const Input& input, const Tempo& tempo);
+/** Analysis role of each track (index-aligned with SongData::tracks). */
+enum class TrackRole { music, click, guide };
+
+/** Empty `roles` = infer from the file names. */
+Input prepareInput (const SongData& song, const std::vector<TrackRole>& roles);
+/** Estimates BPM, beat phase and the first bar line (`beatsPerBar` beats per bar). */
+Tempo detectTempo (const Input& input, int beatsPerBar = 4);
+/** Uses a known BPM (from the user) and only estimates the beat phase and first bar line. */
+Tempo alignTempo (const Input& input, double bpm, int beatsPerBar = 4);
+/** `tempo` may come from detectTempo() / alignTempo() or be fully user-confirmed. */
+std::vector<Section> detectSections (const Input& input, const Tempo& tempo, int beatsPerBar = 4);
 
 } // namespace liveplayer::analysis
