@@ -2,9 +2,14 @@
 
 Requisito del proyecto: **todo debe ser gratuito**.
 
+## Licencia de LIVEPLAYER
+LIVEPLAYER se distribuye bajo **GNU AGPL-3.0-or-later** (texto completo en [`LICENSE`](../LICENSE)). Es la vía gratuita para usar JUCE. Implica que, al distribuir la app (o al ofrecerla por red), hay que publicar su código fuente completo, incluidas las modificaciones, bajo la misma licencia. Las demás dependencias (MIT, Apache-2.0, BSD, ISC, dominio público, LGPL enlazada dinámicamente) son compatibles con la AGPLv3.
+
+## Dependencias
+
 | Componente | Licencia | ¿Gratuito? | Observaciones |
 |---|---|---|---|
-| JUCE 9.0.5 | AGPLv3 **o** JUCE EULA comercial | Sí (con AGPLv3) | ⚠️ **Decisión pendiente.** Con la opción gratuita (AGPLv3), al distribuir LIVEPLAYER hay que publicar su código fuente bajo AGPLv3. La JUCE EULA puede tener un nivel gratuito con límite de ingresos: hay que revisar sus términos vigentes antes de la fase 7. Mientras solo se desarrolla y no se distribuye, no hay obligaciones. |
+| JUCE 9.0.5 | AGPLv3 **o** JUCE EULA comercial | Sí (con AGPLv3) | ✅ **Decidido (2026-11-16):** se usa JUCE bajo AGPLv3. |
 | Tauri 2 | MIT / Apache-2.0 | Sí | |
 | React, React Router, lucide-react | MIT / ISC | Sí | |
 | Tailwind CSS, Vite, Vitest | MIT | Sí | |

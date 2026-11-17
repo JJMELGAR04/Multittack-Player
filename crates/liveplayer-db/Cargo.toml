@@ -2,6 +2,7 @@
 name = "liveplayer-db"
 description = "LIVEPLAYER persistence layer (SQLite, versioned migrations)"
 version.workspace = true
+license.workspace = true
 edition.workspace = true
 
 [dependencies]

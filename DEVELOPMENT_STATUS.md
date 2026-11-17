@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Fase actual** | **FASE 1 — FOUNDATION** |
-| **Estado** | Implementada y probada. ⏳ **Pendiente de aprobación del usuario** |
-| **Rama** | `feature/phase-1-foundation` (se fusionará en `main` cuando se apruebe) |
+| **Estado** | ✅ **Aprobada por el usuario (2026-11-16)** |
+| **Rama** | `feature/phase-1-foundation`, fusionada en `main` |
 | **Fecha** | 2026-11-16 |
 | **Próxima fase** | FASE 2 — Real Audio Playback (**no iniciada**; requiere aprobación expresa) |
 
@@ -45,6 +45,7 @@ El esquema de la base de datos solo contiene `app_settings`. Las tablas de canci
 | Rust: `liveplayer-engine` | `cargo test --workspace` | ✅ 2/2 (información estática, ciclo de vida, ping, diagnóstico de audio, rechazo de hilo ajeno) |
 | Rust: `liveplayer-db` | `cargo test --workspace` | ✅ 4/4 (migración, upsert, persistencia y reapertura, rechazo de esquema futuro) |
 | E2E sobre la app real | `npm run test:e2e -w apps/desktop` | ✅ 14/14 comprobaciones (WebView2 + CDP) |
+| Modo desarrollo | `npm run dev` | ✅ Vite listo en 1,2 s y la app abre. Un cambio en `DashboardPage.tsx` se aplica por HMR sin reiniciar; un cambio en `src-tauri/src/error.rs` recompila (≈11,5 s) y relanza la app sola |
 
 ### Errores encontrados y corregidos durante la fase
 1. `baseUrl` está obsoleto en TypeScript 6 → eliminado (`paths` relativo).
@@ -53,13 +54,13 @@ El esquema de la base de datos solo contiene `app_settings`. Las tablas de canci
 4. UI: la etiqueta "F3" se confundía con las teclas de función → cambiada a "Fase 3"; se corrigieron cortes de texto.
 
 ## Errores conocidos / limitaciones
-- **No probado:** el modo `npm run dev` con recarga en caliente. La app se verificó con el build `tauri build --debug --no-bundle`, que usa la UI compilada.
 - La primera compilación es lenta (configurar JUCE ≈ 3 min, Rust ≈ 5 min en este equipo).
 - macOS, Android e iPadOS: no compilados ni probados (corresponde a las fases 6 y 7).
 - ASIO desactivado (`JUCE_ASIO=0`) hasta la fase 4.
 
-## Decisiones pendientes del usuario
-- **Licencia de JUCE / del proyecto** (ver `docs/LICENSING.md`). La vía 100 % gratuita es AGPLv3, lo que implica publicar el código fuente de LIVEPLAYER al distribuirlo. No bloquea el desarrollo; hay que decidirlo antes de la fase 7.
+## Decisiones tomadas por el usuario
+- **Licencia:** LIVEPLAYER se publica bajo **AGPL-3.0-or-later** (ver `LICENSE` y `docs/LICENSING.md`), lo que permite usar JUCE gratis. El código fuente se publicará al distribuir.
+- **Email de los commits:** se mantiene el configurado en git.
 
 ## Dependencias instaladas
 
@@ -80,5 +81,5 @@ Todas son gratuitas (ver `docs/LICENSING.md`).
 ## Commits
 Ver `git log feature/phase-1-foundation`. Resumen en el informe de la fase.
 
-## Próximo paso propuesto (requiere aprobación)
+## Próximo paso propuesto (pendiente de aprobación del plan)
 **FASE 2 — Real Audio Playback**: lector de WAV con precarga en un hilo de disco, reloj compartido basado en muestras, apertura de dispositivo WASAPI, Play/Pause/Stop/Restart/Seek, posición y duración en la UI vía eventos, volumen maestro con rampas, y pruebas repetidas de sincronización con 2–3 pistas.

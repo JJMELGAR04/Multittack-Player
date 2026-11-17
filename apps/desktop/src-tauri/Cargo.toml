@@ -2,6 +2,7 @@
 name = "liveplayer-desktop"
 description = "LIVEPLAYER desktop application (Tauri 2 shell)"
 version.workspace = true
+license.workspace = true
 edition.workspace = true
 
 [lib]

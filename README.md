@@ -24,3 +24,6 @@ docs/                    Arquitectura, plataformas, licencias, entorno
 - [Entorno de desarrollo](docs/SETUP.md)
 - [Estrategia multiplataforma](docs/PLATFORMS.md)
 - [Licencias](docs/LICENSING.md)
+
+## Licencia
+[GNU AGPL-3.0-or-later](LICENSE). Ver [docs/LICENSING.md](docs/LICENSING.md).
