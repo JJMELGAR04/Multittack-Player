@@ -70,8 +70,8 @@ Leyenda: ✅ Implementado y probado · 🟡 Implementado, prueba parcial · ⏳ 
 | **Ajuste automático de nivel** por canción (evita saturar al sumar stems) | ✅ | *Ancient*: la suma llegaba a +6,1 dBFS (0,53 % de muestras saturadas); ahora queda a −1 dBFS |
 | **Nuevo diseño del Studio** (barra superior de navegación, vista de pistas, mezclador inferior) | ✅ | Capturas E2E `03b-studio-playing.png` |
 | **Medidores de nivel** reales por pista y por bus (pico con caída y retención) | ✅ | Prueba nativa (valores exactos) + E2E (se mueven al reproducir) |
-| **Arrastrar pistas** desde la agarradera ⠿ de su cabecera para cambiar el orden (el mezclador sigue el mismo orden; se guarda con la canción) | ✅ | Prueba de base de datos + E2E (arrastre real de «Lead» a la primera fila) |
-| **Arrastrar canales del mezclador** a izquierda o derecha (mismo orden que las pistas: mover en una vista mueve en la otra) | ✅ | E2E (arrastre real de «Keys» al primer lugar) |
+| **Arrastrar pistas** desde la agarradera ⠿ de su cabecera para cambiar el orden (se guarda con la canción) | ✅ | Prueba de base de datos + E2E (arrastre real de «Lead» a la primera fila) |
+| **Arrastrar canales del mezclador** a izquierda o derecha, con **orden propio**: mover una tira no mueve las pistas y viceversa (migración 5) | ✅ | Prueba de base de datos + E2E (ambos arrastres, cada uno sin afectar al otro) |
 | Orden por defecto: **Click primero, Cues segundo**, luego la banda (también en canciones ya guardadas) | ✅ | Migración 4 + E2E |
 | Diseño pulido: barra del Studio en una fila, rejilla de compases y líneas de partes en las pistas, parte actual resaltada, faders de consola | ✅ | Captura E2E |
 | Volumen, mute (M) y solo (S) por pista | ✅ | E2E: M silencia solo esa pista. *Aún no se guardan por canción: eso llega con el mezclador completo (fase 3), junto con el paneo.* |

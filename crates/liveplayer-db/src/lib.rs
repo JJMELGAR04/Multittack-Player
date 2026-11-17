@@ -15,7 +15,7 @@ use serde::Serialize;
 
 pub use songs::{
     NewSongMeta, NewTrack, SECTION_KINDS, SectionRecord, SongRecord, SongSummary, SongTempo, TIME_SIGNATURES, TRACK_ROLES,
-    TrackRecord, beats_per_bar, bus_for_role, default_display_order,
+    TrackOrder, TrackRecord, beats_per_bar, bus_for_role, default_display_order,
 };
 
 /// Ordered list of migrations. Index + 1 == resulting schema version.
@@ -25,6 +25,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0002_songs.sql"),
     include_str!("../migrations/0003_roles_meter.sql"),
     include_str!("../migrations/0004_track_order.sql"),
+    include_str!("../migrations/0005_mixer_order.sql"),
 ];
 
 pub const LATEST_SCHEMA_VERSION: u32 = MIGRATIONS.len() as u32;

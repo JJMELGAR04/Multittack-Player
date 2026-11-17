@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Mutex;
 
-use liveplayer_db::{Database, NewSongMeta, NewTrack, SectionRecord, SongRecord, SongSummary, SongTempo, beats_per_bar};
+use liveplayer_db::{Database, NewSongMeta, NewTrack, SectionRecord, SongRecord, SongSummary, SongTempo, TrackOrder, beats_per_bar};
 use liveplayer_engine::{Engine, Meters, OutputInfo, OutputMode, SongStatus, TrackRequest, TransportState, engine_role};
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -207,7 +207,13 @@ pub fn studio_update_track(
 /// Order in which the tracks are shown (positions from top to bottom).
 #[tauri::command]
 pub fn studio_reorder_tracks(db: State<'_, DbState>, song_id: i64, positions: Vec<u32>) -> CommandResult<()> {
-    Ok(lock(&db)?.set_track_order(song_id, &positions)?)
+    Ok(lock(&db)?.set_track_order(song_id, TrackOrder::Tracks, &positions)?)
+}
+
+/// Order of the mixer strips (positions from left to right); independent of the tracks.
+#[tauri::command]
+pub fn studio_reorder_mixer(db: State<'_, DbState>, song_id: i64, positions: Vec<u32>) -> CommandResult<()> {
+    Ok(lock(&db)?.set_track_order(song_id, TrackOrder::Mixer, &positions)?)
 }
 
 #[tauri::command]

@@ -175,6 +175,8 @@ export interface TrackRecord {
   bus: Bus;
   /** Where the track is shown (0 = top); the user can drag tracks. */
   displayOrder: number;
+  /** Where its strip is in the mixer (0 = left); independent of displayOrder. */
+  mixerOrder: number;
 }
 
 export interface SectionRecord {

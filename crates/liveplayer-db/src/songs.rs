@@ -58,6 +58,17 @@ pub struct TrackRecord {
     pub bus: String,
     /// Where the track is shown (0 = top). The user can drag tracks.
     pub display_order: u32,
+    /// Where its strip is in the mixer (0 = left). Independent of `display_order`.
+    pub mixer_order: u32,
+}
+
+/** Which arrangement to change. */
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrackOrder {
+    /// The track list (top to bottom).
+    Tracks,
+    /// The mixer strips (left to right).
+    Mixer,
 }
 
 /// Default display order: click first, cues second, then the band in load order.
@@ -186,8 +197,8 @@ impl Database {
         let id = tx.last_insert_rowid();
         {
             let mut stmt = tx.prepare(
-                "INSERT INTO song_tracks (song_id, position, name, file_path, role, bus, display_order)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO song_tracks (song_id, position, name, file_path, role, bus, display_order, mixer_order)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
             )?;
             let roles: Vec<&str> = tracks.iter().map(|t| t.role.as_str()).collect();
             let order = default_display_order(&roles);
@@ -217,9 +228,10 @@ impl Database {
         if n == 0 { Err(DbError::NotFound(format!("pista {position} de la canción {song_id}"))) } else { Ok(()) }
     }
 
-    /// Saves the order in which the tracks are shown: `positions` lists every
-    /// track position (load order) from top to bottom.
-    pub fn set_track_order(&mut self, song_id: i64, positions: &[u32]) -> Result<(), DbError> {
+    /// Saves an arrangement: `positions` lists every track position (load
+    /// order) from top to bottom (tracks) or left to right (mixer). Changing
+    /// one arrangement never touches the other.
+    pub fn set_track_order(&mut self, song_id: i64, which: TrackOrder, positions: &[u32]) -> Result<(), DbError> {
         let count: u32 =
             self.conn.query_row("SELECT COUNT(*) FROM song_tracks WHERE song_id = ?1", [song_id], |r| r.get(0))?;
         if count == 0 {
@@ -232,7 +244,11 @@ impl Database {
         }
         let tx = self.conn.transaction()?;
         {
-            let mut stmt = tx.prepare("UPDATE song_tracks SET display_order = ?3 WHERE song_id = ?1 AND position = ?2")?;
+            let sql = match which {
+                TrackOrder::Tracks => "UPDATE song_tracks SET display_order = ?3 WHERE song_id = ?1 AND position = ?2",
+                TrackOrder::Mixer => "UPDATE song_tracks SET mixer_order = ?3 WHERE song_id = ?1 AND position = ?2",
+            };
+            let mut stmt = tx.prepare(sql)?;
             for (shown, pos) in positions.iter().enumerate() {
                 stmt.execute(params![song_id, pos, shown as u32])?;
             }
@@ -306,7 +322,8 @@ impl Database {
         song.tracks = self
             .conn
             .prepare(
-                "SELECT position, name, file_path, role, bus, display_order FROM song_tracks WHERE song_id = ?1 ORDER BY position",
+                "SELECT position, name, file_path, role, bus, display_order, mixer_order
+                 FROM song_tracks WHERE song_id = ?1 ORDER BY position",
             )?
             .query_map([id], |r| {
                 Ok(TrackRecord {
@@ -316,6 +333,7 @@ impl Database {
                     role: r.get(3)?,
                     bus: r.get(4)?,
                     display_order: r.get(5)?,
+                    mixer_order: r.get(6)?,
                 })
             })?
             .collect::<Result<_, _>>()?;
@@ -430,11 +448,22 @@ mod tests {
         assert_eq!(shown(&db), vec!["Click", "Guia", "Bass", "Drums"]);
 
         // User drags Drums to the top.
-        db.set_track_order(id, &[1, 3, 2, 0]).unwrap();
+        db.set_track_order(id, TrackOrder::Tracks, &[1, 3, 2, 0]).unwrap();
         assert_eq!(shown(&db), vec!["Drums", "Click", "Guia", "Bass"]);
-        assert!(db.set_track_order(id, &[0, 0, 1, 2]).is_err());
-        assert!(db.set_track_order(id, &[0, 1, 2]).is_err());
-        assert!(matches!(db.set_track_order(999, &[0]), Err(DbError::NotFound(_))));
+        assert!(db.set_track_order(id, TrackOrder::Tracks, &[0, 0, 1, 2]).is_err());
+        assert!(db.set_track_order(id, TrackOrder::Tracks, &[0, 1, 2]).is_err());
+        assert!(matches!(db.set_track_order(999, TrackOrder::Tracks, &[0]), Err(DbError::NotFound(_))));
+
+        // The mixer has its own order: moving a strip does not move the tracks.
+        let mixer = |db: &Database| {
+            let mut tr = db.get_song(id).unwrap().unwrap().tracks;
+            tr.sort_by_key(|x| x.mixer_order);
+            tr.into_iter().map(|x| x.name).collect::<Vec<_>>()
+        };
+        assert_eq!(mixer(&db), vec!["Click", "Guia", "Bass", "Drums"]); // starts like the import order
+        db.set_track_order(id, TrackOrder::Mixer, &[0, 1, 3, 2]).unwrap();
+        assert_eq!(mixer(&db), vec!["Bass", "Drums", "Click", "Guia"]);
+        assert_eq!(shown(&db), vec!["Drums", "Click", "Guia", "Bass"]); // tracks unchanged
         assert_eq!(default_display_order(&["bass", "click"]), vec![1, 0]);
     }
 

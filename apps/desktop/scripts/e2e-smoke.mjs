@@ -144,7 +144,7 @@ try {
   const shownOrder = [...reordered.tracks].sort((a, b) => a.displayOrder - b.displayOrder).map((tr) => tr.name).join(", ");
   check("new order saved with the song", shownOrder === afterDrag, shownOrder);
   const mixerOrder = await evaluate(`[...document.querySelectorAll("[data-strip]")].map(d => d.dataset.strip).slice(0, 5).join(", ")`);
-  check("mixer follows the same order", mixerOrder === afterDrag, mixerOrder);
+  check("moving a track does not move the mixer strips", mixerOrder === "Click, Bass, Drums, Keys, Lead", mixerOrder);
 
   // Drag the "Keys" mixer strip (last) to the far left.
   await evaluate(`(async () => {
@@ -159,9 +159,9 @@ try {
   await sleep(700);
   const mixerAfter = await evaluate(`[...document.querySelectorAll("[data-strip]")].map(d => d.dataset.strip).slice(0, 5).join(", ")`);
   check("drag a mixer strip left/right to reorder", mixerAfter.startsWith("Keys"), mixerAfter);
-  check("track lanes follow the mixer order", (await laneOrder()) === mixerAfter, await laneOrder());
+  check("moving a mixer strip does not move the tracks", (await laneOrder()) === afterDrag, await laneOrder());
   const savedAfter = await invoke("studio_get_song", { songId: opened.id });
-  check("mixer order saved with the song", [...savedAfter.tracks].sort((a, b) => a.displayOrder - b.displayOrder).map((tr) => tr.name).join(", ") === mixerAfter);
+  check("mixer order saved with the song", [...savedAfter.tracks].sort((a, b) => a.mixerOrder - b.mixerOrder).map((tr) => tr.name).join(", ") === mixerAfter);
 
   await clickButton("Reproducir");
   await sleep(1500);

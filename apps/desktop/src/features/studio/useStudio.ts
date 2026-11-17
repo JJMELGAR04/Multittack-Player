@@ -81,6 +81,8 @@ export interface Studio {
   setSongInfo: (title: string, timeSignature: TimeSignature) => void;
   /** New display order: track positions from top to bottom. */
   reorderTracks: (positions: number[]) => void;
+  /** New mixer order: track positions from left to right (tracks unchanged). */
+  reorderMixer: (positions: number[]) => void;
 
   // Mixer (volume / mute / solo per track; persisted from phase 3 on).
   meters: MeterStore;
@@ -518,6 +520,17 @@ export function useStudio(): Studio {
     [later],
   );
 
+  const reorderMixer = useCallback(
+    (positions: number[]) => {
+      const current = songRef.current;
+      if (!current) return;
+      const order = new Map(positions.map((pos, i) => [pos, i]));
+      setSong({ ...current, tracks: current.tracks.map((t) => ({ ...t, mixerOrder: order.get(t.position) ?? t.mixerOrder })) });
+      later(`mixer-order-${current.id}`, () => backend.studioReorderMixer(current.id, positions), 300);
+    },
+    [later],
+  );
+
   const setSongInfo = useCallback(
     (title: string, timeSignature: TimeSignature) => {
       const current = songRef.current;
@@ -565,6 +578,7 @@ export function useStudio(): Studio {
     updateTrack,
     setSongInfo,
     reorderTracks,
+    reorderMixer,
     meters,
     mixer,
     setTrackVolume,

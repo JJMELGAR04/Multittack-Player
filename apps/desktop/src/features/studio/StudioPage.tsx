@@ -155,11 +155,21 @@ export function StudioPage() {
     ? loaded.tracks
         .map((t, i) => {
           const rec = song?.tracks.find((r) => r.position === i);
-          return { index: i, name: rec?.name ?? t.name, role: rec?.role ?? "other", bus: rec?.bus ?? t.bus, order: rec?.displayOrder ?? i };
+          return {
+            index: i,
+            name: rec?.name ?? t.name,
+            role: rec?.role ?? "other",
+            bus: rec?.bus ?? t.bus,
+            order: rec?.displayOrder ?? i,
+            mixerOrder: rec?.mixerOrder ?? rec?.displayOrder ?? i,
+          };
         })
         .sort((a, b) => a.order - b.order || a.index - b.index)
     : [];
+  // The mixer strips have their own order: moving one never moves the tracks.
+  const mixerTracks = [...tracks].sort((a, b) => a.mixerOrder - b.mixerOrder || a.index - b.index);
   const reorder = (from: number, to: number) => studio.reorderTracks(moveItem(tracks, from, to).map((t) => t.index));
+  const reorderMixer = (from: number, to: number) => studio.reorderMixer(moveItem(mixerTracks, from, to).map((t) => t.index));
   const outputMode: OutputMode = studio.outputSettings?.mode ?? transport?.outputMode ?? "stereo";
   const monitorGain = studio.outputSettings?.monitorGain ?? 1;
   const setOutputMode = (mode: OutputMode) => studio.setOutput({ mode, monitorGain });
@@ -315,7 +325,7 @@ export function StudioPage() {
               <div className="min-h-0 flex-1 overflow-hidden" role="tabpanel">
                 {dock === "mixer" && (
                   <Mixer
-                    tracks={tracks}
+                    tracks={mixerTracks}
                     volumesDb={studio.mixer.volumesDb}
                     mute={studio.mixer.mute}
                     solo={studio.mixer.solo}
@@ -328,7 +338,7 @@ export function StudioPage() {
                     onSolo={studio.toggleSolo}
                     onMaster={(db) => studio.setGain(dbToGain(db))}
                     onMonitor={(db) => studio.setOutput({ mode: outputMode, monitorGain: dbToGain(db) })}
-                    onReorder={reorder}
+                    onReorder={reorderMixer}
                   />
                 )}
                 {dock === "sections" && (

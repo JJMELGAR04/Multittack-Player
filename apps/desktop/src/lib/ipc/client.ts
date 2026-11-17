@@ -84,6 +84,7 @@ export const backend = {
   studioSetSongInfo: (songId: number, title: string, timeSignature: TimeSignature) =>
     call<void>("studio_set_song_info", { songId, title, timeSignature }),
   studioReorderTracks: (songId: number, positions: number[]) => call<void>("studio_reorder_tracks", { songId, positions }),
+  studioReorderMixer: (songId: number, positions: number[]) => call<void>("studio_reorder_mixer", { songId, positions }),
   studioSetTrackGain: (track: number, gain: number) => call<void>("studio_set_track_gain", { track, gain }),
   studioOutputSettings: () => call<OutputSettings>("studio_output_settings"),
   studioSetOutput: (settings: OutputSettings) => call<void>("studio_set_output", { settings }),
