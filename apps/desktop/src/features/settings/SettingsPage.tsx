@@ -5,6 +5,7 @@ import type { BackupReport } from "@/lib/ipc/types";
 import { actionFor, DEFAULT_SHORTCUTS, keyLabel, keyName, SHORTCUT_ACTIONS, type ShortcutAction } from "@/features/live/model";
 import { useShortcutSettings } from "@/features/live/songView";
 import { PerformanceSection } from "./PerformanceSection";
+import { AboutSection } from "./AboutSection";
 
 /** Keys that cannot be assigned (they would break typing or the app). */
 const RESERVED = new Set(["Tab", "Enter", "Delete", "Backspace", "Ctrl+Z", "Ctrl+Y", "Ctrl+Shift+Z", "F5", "Ctrl+R"]);
@@ -93,7 +94,7 @@ export function SettingsPage() {
         <Settings className="text-info-400" size={26} />
         <div>
           <h1 className="text-2xl font-bold">General Settings</h1>
-          <p className="text-sm text-ink-300">Atajos de teclado, rendimiento y copias de seguridad de tu biblioteca.</p>
+          <p className="text-sm text-ink-300">Atajos de teclado, rendimiento, copias de seguridad de tu biblioteca y licencias.</p>
         </div>
       </header>
 
@@ -163,6 +164,8 @@ export function SettingsPage() {
           </button>
         </div>
       </section>
+
+      <AboutSection />
     </div>
   );
 }

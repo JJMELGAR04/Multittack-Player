@@ -52,3 +52,6 @@ test-audio/
 MUSICA/
 # Design references from the user (local only)
 Visualizacion/
+
+# Installers built with npm run installer
+instaladores/

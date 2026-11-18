@@ -9,6 +9,21 @@ export function formatTime(sec: number, decimals = 1): string {
   return `${m}:${ss}`;
 }
 
+/**
+ * Reads a time typed by the user: "1:23.45", "1:23,45", "83.45" or "83".
+ * Returns seconds, or null if it is not a valid time.
+ */
+export function parseTime(text: string): number | null {
+  const t = text.trim().replace(/,/g, ".");
+  const m = /^(?:(\d+):)?(\d+(?:\.\d*)?|\.\d+)$/.exec(t);
+  if (!m) return null;
+  const min = m[1] ? Number(m[1]) : 0;
+  const sec = Number(m[2]);
+  if (m[1] && sec >= 60) return null;
+  const v = min * 60 + sec;
+  return Number.isFinite(v) ? v : null;
+}
+
 // ---- Volume ------------------------------------------------------------------
 
 export const MIN_DB = -60;

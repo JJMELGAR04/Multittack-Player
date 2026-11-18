@@ -1,7 +1,7 @@
 {
   "name": "liveplayer",
   "private": true,
-  "version": "0.6.0",
+  "version": "1.0.0",
   "license": "AGPL-3.0-or-later",
   "description": "LIVEPLAYER - professional live multitrack playback",
   "workspaces": [
@@ -11,6 +11,7 @@
     "dev": "npm run tauri:dev -w apps/desktop",
     "build": "npm run tauri:build -w apps/desktop",
     "test": "npm run test -w apps/desktop",
-    "typecheck": "npm run typecheck -w apps/desktop"
+    "typecheck": "npm run typecheck -w apps/desktop",
+    "installer": "node tools/build-installer.mjs"
   }
 }

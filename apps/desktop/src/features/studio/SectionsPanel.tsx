@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { ChevronLeft, ChevronRight, Pencil, Play, Plus, Sparkles, Trash2 } from "lucide-react";
 import type { SectionKind, SectionRecord } from "@/lib/ipc/types";
 import { formatTime, kindLabel, SECTION_COLORS, SECTION_KINDS, type TimedSection } from "./model";
@@ -20,10 +21,19 @@ const strip = ({ startSec, kind, label, source }: TimedSection): SectionRecord =
 
 export function SectionsPanel(props: Props) {
   const { sections, current, editing } = props;
-  const update = (i: number, patch: Partial<SectionRecord>) =>
-    props.onChange(sections.map((s, j) => (j === i ? { ...strip(s), ...patch, source: "user" } : strip(s))));
-  const remove = (i: number) => props.onChange(sections.filter((_, j) => j !== i).map(strip));
+  // Last list sent: fast clicks (several before the next render) all count.
+  const latest = useRef(sections);
+  useEffect(() => {
+    latest.current = sections;
+  }, [sections]);
+  const send = (next: TimedSection[]) => {
+    latest.current = next;
+    props.onChange(next.map(strip));
+  };
+  const update = (i: number, patch: Partial<SectionRecord>) => send(latest.current.map((s, j) => (j === i ? { ...s, ...patch, source: "user" } : s)));
+  const remove = (i: number) => send(latest.current.filter((_, j) => j !== i));
   const nudge = (i: number, dir: -1 | 1) => {
+    const sections = latest.current;
     const s = sections[i];
     if (!s) return;
     const step = props.barSec ?? 1;

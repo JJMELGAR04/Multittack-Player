@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ChevronLeft, ChevronRight, Magnet, Pause, PencilRuler, Play, Plus, Redo2, Repeat, Square, Trash2, Undo2, ZoomIn, ZoomOut } from "lucide-react";
+import { ChevronLeft, ChevronRight, Magnet, Pause, PencilRuler, Play, Plus, Redo2, Repeat, Square, Tags, Trash2, Undo2, ZoomIn, ZoomOut } from "lucide-react";
 import { backend, isNativeAvailable } from "@/lib/ipc/client";
 import type { LibrarySong, SectionKind, SectionRecord, SongDetails, TimeSignature } from "@/lib/ipc/types";
 import {
   beatsPerBar,
   formatBpm,
   formatTime,
+  parseTime,
   renumber,
   SECTION_COLORS,
   SECTION_KINDS,
@@ -15,6 +16,7 @@ import {
   withEnds,
 } from "@/features/studio/model";
 import { useStudio } from "@/features/studio/useStudio";
+import { TracksPanel } from "@/features/studio/OutputPanel";
 import { historyOf, keyLabel, moveBoundary, pushHistory, redo, removePart, rename, setKind, splitAt, undo, type History } from "@/features/live/model";
 import { livePosition, useShortcutKeys, useShortcutSettings, useSongView } from "@/features/live/songView";
 
@@ -22,6 +24,54 @@ const PEAKS_PER_SECOND = 100;
 const WAVE_H = 150;
 const KEYS = ["C", "C#", "Db", "D", "D#", "Eb", "E", "F", "F#", "Gb", "G", "G#", "Ab", "A", "A#", "Bb", "B"];
 const KEY_OPTIONS = [...KEYS, ...KEYS.map((k) => `${k}m`)];
+/** How much the ‹ › buttons move a start or an end. */
+const STEPS = [
+  { id: "beat", label: "1 tiempo" },
+  { id: "0.1", label: "0,1 s" },
+  { id: "0.01", label: "0,01 s" },
+] as const;
+type StepId = (typeof STEPS)[number]["id"];
+
+/** A start or end time the user can type exactly (m:ss.ss), with ‹ › fine nudges. */
+function TimeEdit({ label, value, disabled, onSet, onNudge }: { label: string; value: number; disabled?: boolean; onSet: (t: number) => void; onNudge: (dir: -1 | 1) => void }) {
+  const commit = (el: HTMLInputElement) => {
+    const t = parseTime(el.value);
+    if (t === null || Math.abs(t - value) < 0.0005) el.value = formatTime(value, 2);
+    else onSet(t);
+  };
+  return (
+    <div className="grid gap-1 text-xs text-ink-300">
+      {label}
+      <div className="flex items-center gap-1">
+        <button type="button" disabled={disabled} onClick={() => onNudge(-1)} aria-label={`${label}: antes`} className="rounded-md bg-ink-800 p-1.5 text-ink-100 hover:bg-ink-700 disabled:opacity-30">
+          <ChevronLeft size={14} />
+        </button>
+        <input
+          key={value}
+          aria-label={label}
+          defaultValue={formatTime(value, 2)}
+          disabled={disabled}
+          inputMode="decimal"
+          onBlur={(e) => commit(e.target)}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            const el = e.target as HTMLInputElement;
+            if (e.key === "Enter") el.blur();
+            if (e.key === "Escape") {
+              el.value = formatTime(value, 2);
+              el.blur();
+            }
+          }}
+          className="w-24 rounded-md border border-ink-700 bg-ink-950 px-2 py-1.5 text-center font-mono text-sm text-ink-100 disabled:opacity-50"
+          title="Escribe el tiempo exacto, por ejemplo 1:23.45"
+        />
+        <button type="button" disabled={disabled} onClick={() => onNudge(1)} aria-label={`${label}: después`} className="rounded-md bg-ink-800 p-1.5 text-ink-100 hover:bg-ink-700 disabled:opacity-30">
+          <ChevronRight size={14} />
+        </button>
+      </div>
+    </div>
+  );
+}
 
 interface EditState {
   sections: SectionRecord[];
@@ -72,7 +122,9 @@ export function SongEditorPage() {
   const [hist, setHist] = useState<History<EditState> | null>(null);
   const [selected, setSelected] = useState(0);
   const [newKind, setNewKind] = useState<SectionKind>("verse");
-  const [snap, setSnap] = useState(true);
+  // Free placement by default: a part can start anywhere (to the hundredth of a second).
+  const [snap, setSnap] = useState(false);
+  const [step, setStep] = useState<StepId>("0.1");
   const [zoom, setZoom] = useState(1);
   const [saved, setSaved] = useState<"saved" | "saving" | "dirty">("saved");
   const [error, setError] = useState<string | null>(null);
@@ -232,10 +284,19 @@ export function SongEditorPage() {
       fail(e);
     }
   };
-  const nudge = (beatsDelta: number) => {
-    if (!present || !sel || selected === 0) return;
-    const step = bpm ? (60 / bpm) * beatsDelta : 0.1 * beatsDelta;
-    setSections(moveBoundary(present.sections, selected, sel.startSec + step, duration));
+  // A cut is shared: the end of a part is the start of the next one.
+  // Both work on the latest state (not the rendered one): fast clicks all count.
+  const setCut = (index: number, t: number) => {
+    if (index <= 0) return;
+    commit((s) => (index < s.sections.length ? { ...s, sections: moveBoundary(s.sections, index, t, duration) } : s));
+  };
+  const stepSec = step === "beat" ? (bpm ? 60 / bpm : 0.1) : Number(step);
+  const nudgeCut = (index: number, dir: -1 | 1) => {
+    if (index <= 0) return;
+    commit((s) => {
+      const cur = withEnds(s.sections, duration)[index];
+      return cur ? { ...s, sections: moveBoundary(s.sections, index, cur.startSec + dir * stepSec, duration) } : s;
+    });
   };
   const deleteSelected = () => {
     if (!present || sections.length <= 1) return;
@@ -371,7 +432,7 @@ export function SongEditorPage() {
             <button type="button" onClick={markHere} className="flex items-center gap-1 rounded-lg bg-info-500 px-3 py-2 text-sm font-semibold text-white hover:bg-info-400" title="Marca el inicio de una parte donde está el cursor (también mientras suena)">
               <Plus size={15} /> Marcar aquí ({keyLabel(shortcuts.markPart)})
             </button>
-            <button type="button" aria-pressed={snap} onClick={() => setSnap((s) => !s)} className={`flex items-center gap-1 rounded-lg px-3 py-2 text-xs ${snap ? "bg-go-500/15 text-go-400" : "bg-ink-800 text-ink-300"}`} title="Ajustar los cortes al compás">
+            <button type="button" aria-pressed={snap} onClick={() => setSnap((s) => !s)} className={`flex items-center gap-1 rounded-lg px-3 py-2 text-xs ${snap ? "bg-go-500/15 text-go-400" : "bg-ink-800 text-ink-300"}`} title="Activado: los cortes caen en el inicio de un compás. Desactivado: puedes ponerlos donde quieras">
               <Magnet size={14} /> {snap ? "Ajuste al compás" : "Sin ajuste"}
             </button>
             <div className="ml-auto flex items-center gap-1">
@@ -386,7 +447,7 @@ export function SongEditorPage() {
           </div>
 
           {/* Timeline */}
-          <div ref={scrollRef} className="relative mx-5 overflow-x-auto rounded-xl border border-ink-800 bg-ink-950" data-editor-timeline>
+          <div ref={scrollRef} className="relative mx-5 shrink-0 overflow-x-auto rounded-xl border border-ink-800 bg-ink-950" data-editor-timeline>
             <div className="relative" style={{ width: contentW, height: 26 + 38 + WAVE_H }}>
               {/* Ruler */}
               <div className="absolute inset-x-0 top-0 h-[26px] border-b border-ink-800">
@@ -433,7 +494,7 @@ export function SongEditorPage() {
                     aria-valuenow={Math.round(s.startSec * 100) / 100}
                     className="group absolute top-[26px] z-10 w-3 -translate-x-1/2 cursor-ew-resize touch-none"
                     style={{ left: xOf(s.startSec), height: 38 + WAVE_H }}
-                    title="Arrastra para mover el inicio de la parte"
+                    title={`Arrastra para mover el corte: fin de ${shown[i - 1]!.label} / inicio de ${s.label}`}
                   >
                     <div className={`mx-auto h-full w-0.5 ${drag?.index === i ? "bg-white" : "bg-white/60 group-hover:bg-white"}`} />
                   </div>
@@ -476,17 +537,28 @@ export function SongEditorPage() {
                       />
                     </label>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2 text-sm">
-                    <span className="text-ink-300">
-                      Empieza en <b className="font-mono text-ink-100">{formatTime(sel.startSec, 2)}</b> · dura <b className="font-mono text-ink-100">{formatTime(sel.endSec - sel.startSec, 1)}</b>
+                  <div className="flex flex-wrap items-end gap-4">
+                    <TimeEdit label="Empieza en" value={sel.startSec} disabled={selected === 0} onSet={(t) => setCut(selected, t)} onNudge={(d) => nudgeCut(selected, d)} />
+                    <TimeEdit label="Termina en" value={sel.endSec} disabled={selected >= sections.length - 1} onSet={(t) => setCut(selected + 1, t)} onNudge={(d) => nudgeCut(selected + 1, d)} />
+                    <div className="grid gap-1 text-xs text-ink-300">
+                      Mover de a
+                      <select aria-label="Cuánto mueven las flechas" value={step} onChange={(e) => setStep(e.target.value as StepId)} className="rounded-md border border-ink-700 bg-ink-950 px-2 py-1.5 text-sm text-ink-100">
+                        {STEPS.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <span className="pb-2 text-xs text-ink-400">
+                      dura <b className="font-mono text-ink-200">{formatTime(sel.endSec - sel.startSec, 2)}</b>
                     </span>
-                    <button type="button" disabled={selected === 0} onClick={() => nudge(-1)} className="flex items-center rounded-md bg-ink-800 px-2 py-1 text-xs disabled:opacity-30" aria-label="Mover el inicio un tiempo antes">
-                      <ChevronLeft size={14} /> 1 tiempo
-                    </button>
-                    <button type="button" disabled={selected === 0} onClick={() => nudge(1)} className="flex items-center rounded-md bg-ink-800 px-2 py-1 text-xs disabled:opacity-30" aria-label="Mover el inicio un tiempo después">
-                      1 tiempo <ChevronRight size={14} />
-                    </button>
                   </div>
+                  <p className="text-[11px] text-ink-400">
+                    Escribe el tiempo exacto (por ejemplo <span className="font-mono">1:23.45</span>) o usa las flechas. El final de una parte es el inicio de la siguiente: al mover uno se mueve el otro.
+                    {selected === 0 && " La primera parte siempre empieza en 0:00."}
+                    {selected === sections.length - 1 && " La última parte termina al final de la canción."}
+                  </p>
                   <div className="flex flex-wrap gap-2">
                     <button type="button" onClick={() => studio.playFrom(sel.startSec)} className="flex items-center gap-1 rounded-lg bg-go-500/15 px-3 py-1.5 text-sm text-go-400 hover:bg-go-500/25">
                       <Play size={14} /> Escuchar desde aquí
@@ -563,6 +635,19 @@ export function SongEditorPage() {
               </div>
             </section>
           </div>
+
+          {/* Tracks: fix a wrong name or what each audio is */}
+          {song && (
+            <section className="mx-5 mb-5 rounded-xl border border-ink-800 bg-ink-900/60 p-4" data-editor-tracks>
+              <h2 className="mb-1 flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-ink-200">
+                <Tags size={16} className="text-info-400" /> Pistas
+              </h2>
+              <p className="mb-3 text-xs text-ink-400">
+                Corrige el nombre de cada audio y elige qué instrumento es. Se guarda solo. Lo que elijas decide por dónde sale: el click y los cues van a los in-ears; lo demás, a la banda.
+              </p>
+              <TracksPanel song={song} onUpdate={studio.updateTrack} />
+            </section>
+          )}
         </div>
       )}
     </div>

@@ -23,4 +23,11 @@ LIVEPLAYER se distribuye bajo **GNU AGPL-3.0-or-later** (texto completo en [`LIC
 | Visual Studio 2022 Build Tools | Licencia de Microsoft | Sí | Gratuito para desarrolladores individuales y proyectos de código abierto. Solo se necesita para compilar; el usuario final no lo instala. |
 | CMake | BSD-3 | Sí | |
 | ASIO SDK 2.3.4 de Steinberg | Doble licencia: propietaria **o GPLv3** (desde octubre de 2025) | Sí | LIVEPLAYER lo usa bajo la **GPLv3**, compatible con nuestra AGPLv3: gratis, sin firmar acuerdos y redistribuible. Se descarga con `node tools/fetch-asio-sdk.mjs` y no se sube al repositorio (`third_party/asio/` está en `.gitignore`). No usamos el logotipo de ASIO. Los **controladores** ASIO los instala cada fabricante de interfaz; no forman parte de LIVEPLAYER. |
-| FFmpeg (fase 3, si se usa) | LGPL (configuración sin componentes GPL) | Sí | Hay que enlazarlo dinámicamente para cumplir la LGPL; algunos códecs (AAC, WMA) tienen consideraciones de patentes que se documentarán en la fase 3. |
+| FFmpeg | LGPL / GPL | Sí | **No va dentro de la app.** Solo se usa en desarrollo para comparar el audio decodificado con una referencia. El motor decodifica WAV, AIFF, FLAC, OGG y MP3 con JUCE. |
+| Runtime de C/C++ de Microsoft (MSVC) | Licencia de Microsoft (redistribuible) | Sí | Enlazado **estáticamente** dentro del `.exe` (fase 7): la app no necesita el «Visual C++ Redistributable» en un Windows recién instalado. |
+| Microsoft Edge WebView2 (instalador sin conexión) | Licencia de Microsoft, redistribuible gratis | Sí | Va dentro del instalador de Windows (fase 7) para instalar sin internet. Windows 10/11 casi siempre ya lo tiene; si no, el instalador lo agrega. |
+| NSIS (genera el instalador de Windows) | zlib / CPL | Sí | Solo crea el instalador; Tauri lo descarga al compilar. |
+
+## Distribución (fase 7)
+- Los instaladores **no están firmados** (firmar cuesta: Apple Developer 99 USD/año; certificado de Windows). Decisión del usuario: se comparten sin firmar; la guía [`INSTALAR.md`](INSTALAR.md) explica el aviso de la primera vez. En Mac la app lleva una firma *ad hoc* (gratuita) para que los Mac con chip Apple la puedan ejecutar.
+- Los avisos de licencia van **dentro de la app** (General Settings › Acerca de): texto de la AGPL-3.0 y [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md). La AGPL exige ofrecer el código fuente: la app muestra el enlace al repositorio.

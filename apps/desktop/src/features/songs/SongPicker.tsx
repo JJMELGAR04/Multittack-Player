@@ -22,6 +22,11 @@ export function SongPicker({ disabled, current, onPick }: Props) {
   const load = () => {
     backend.librarySongs().then(setSongs, () => {});
   };
+  // Fresh list every time the results open (by focus or by typing): the
+  // focus event alone is not delivered while the window is in the background.
+  useEffect(() => {
+    if (open) load();
+  }, [open]);
   useEffect(() => {
     if (!open) return;
     const close = (e: MouseEvent) => {
@@ -48,10 +53,7 @@ export function SongPicker({ disabled, current, onPick }: Props) {
           disabled={disabled}
           value={query}
           placeholder={current ? `${current} · buscar otra…` : "Buscar canción…"}
-          onFocus={() => {
-            load();
-            setOpen(true);
-          }}
+          onFocus={() => setOpen(true)}
           onChange={(e) => {
             setQuery(e.target.value);
             setActive(0);

@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.24)
 set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
 
 project(liveplayer_engine
-    VERSION 0.6.0
+    VERSION 1.0.0
     DESCRIPTION "LIVEPLAYER native real-time audio engine"
     LANGUAGES C CXX)
 
@@ -14,11 +14,18 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# The engine is linked into the Rust/Tauri executable, which always uses the
-# release dynamic CRT (/MD) on MSVC. Force the same CRT for every configuration
-# to avoid LNK2038 runtime mismatches.
+# The engine is linked into the Rust/Tauri executable and must use the same
+# CRT (otherwise LNK2038 mismatches). The app is built with the static CRT
+# (.cargo/config.toml: crt-static), so the installed program needs no Visual
+# C++ Redistributable on a fresh Windows; build.rs passes
+# LIVEPLAYER_STATIC_CRT=ON. Standalone engine builds (tests) keep /MD.
+option(LIVEPLAYER_STATIC_CRT "Link the MSVC runtime statically (/MT)" OFF)
 if(MSVC)
-    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+    if(LIVEPLAYER_STATIC_CRT)
+        set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
+    else()
+        set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+    endif()
     add_compile_options(/utf-8 /MP /bigobj)
 endif()
 
@@ -212,7 +219,8 @@ if(LIVEPLAYER_ENGINE_BUILD_TESTS)
     endif()
     add_test(NAME engine_audio COMMAND liveplayer_engine_audio_tests ${LIVEPLAYER_TEST_AUDIO_DIR})
     set_tests_properties(engine_audio PROPERTIES FIXTURES_REQUIRED test_audio TIMEOUT 900)
-    # 2 minutes of audio at 6x speed with song changes, jumps, loops, tempo and key changes.
-    add_test(NAME engine_soak COMMAND liveplayer_soak ${LIVEPLAYER_TEST_AUDIO_DIR} 2 6)
+    # Endurance run with song changes, jumps, loops, tempo and key changes.
+    # 2x: same margin per block as normal use (6x leaves only 25 ms; run it by hand: liveplayer_soak <dir> 60 6).
+    add_test(NAME engine_soak COMMAND liveplayer_soak ${LIVEPLAYER_TEST_AUDIO_DIR} 3 2)
     set_tests_properties(engine_soak PROPERTIES FIXTURES_REQUIRED test_audio TIMEOUT 300)
 endif()

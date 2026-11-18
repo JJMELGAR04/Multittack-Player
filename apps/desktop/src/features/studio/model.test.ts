@@ -14,6 +14,7 @@ import {
   formatDb,
   formatPercent,
   formatTime,
+  parseTime,
   gainToDb,
   renumber,
   sectionAt,
@@ -36,6 +37,17 @@ describe("formatting", () => {
     expect(formatTime(65.34)).toBe("1:05.3");
     expect(formatTime(600, 0)).toBe("10:00");
     expect(formatTime(-3)).toBe("0:00.0");
+  });
+
+  it("reads typed times (with decimals, comma or dot)", () => {
+    expect(parseTime("1:23.45")).toBeCloseTo(83.45);
+    expect(parseTime("1:23,45")).toBeCloseTo(83.45);
+    expect(parseTime(" 83.5 ")).toBeCloseTo(83.5);
+    expect(parseTime("12")).toBe(12);
+    expect(parseTime("0:05.")).toBe(5);
+    expect(parseTime("1:75")).toBeNull();
+    expect(parseTime("abc")).toBeNull();
+    expect(parseTime("")).toBeNull();
   });
 
   it("formats BPM and percentages", () => {

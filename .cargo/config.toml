@@ -1,0 +1,8 @@
+# Windows: link the C/C++ runtime statically so the installed app runs on a
+# fresh Windows without the Visual C++ Redistributable (no MSVCP140.dll).
+# The engine (CMake) follows this setting, see crates/liveplayer-engine/build.rs.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

@@ -1,6 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type {
   AppInfo,
+  AppLicenses,
   AudioDiagnostics,
   DeviceCapabilities,
   DeviceChoice,
@@ -75,6 +76,7 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
 /** Typed wrappers for every backend command. Single entry point for IPC. */
 export const backend = {
   appInfo: () => call<AppInfo>("app_info"),
+  appLicenses: () => call<AppLicenses>("app_licenses"),
   engineInfo: () => call<EngineInfo>("engine_info"),
   enginePing: (value: number) => call<EnginePing>("engine_ping", { value }),
   audioDiagnostics: () => call<AudioDiagnostics>("audio_diagnostics"),
