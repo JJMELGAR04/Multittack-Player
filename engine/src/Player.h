@@ -71,6 +71,9 @@ public:
         toneSerial.fetch_add (1);
     }
     double getTempoTarget() const noexcept { return tempoTarget.load(); }
+    /** Lighter time-stretch for modest computers; applies to the next setSong(). */
+    void setEconomy (bool on) noexcept { economy = on; }
+    bool isEconomy() const noexcept { return economy; }
     /** Pitch shift of the music tracks in semitones (-12..12); click / cues untouched. */
     void setTranspose (double semitones);
     double getTranspose() const noexcept { return transposeTarget.load(); }
@@ -151,6 +154,7 @@ private:
     ChunkRing ring;
     SongRenderer renderer; // render thread only (after setSong)
     SongRenderer altRenderer; // second renderer for seamless jumps / loops
+    bool economy = false;     // control thread
     std::unique_ptr<RenderThread> renderThread;
     std::atomic<bool> sampleRateMismatch { false };
 
@@ -203,6 +207,8 @@ private:
     std::atomic<float> mainTrimTarget { 1.0f }, monitorTrimTarget { 1.0f };
     juce::LinearSmoothedValue<float> mainTrim { 1.0f }, monitorTrim { 1.0f };
     Limiter mainLimiter, monitorLimiter;
+    Limiter outputLimiter; // sum of both buses when they share outputs
+    juce::AudioBuffer<float> outScratch { 2, ChunkRing::chunkFrames };
     std::atomic<float> mainLimiterGain { 1.0f }, monitorLimiterGain { 1.0f };
     std::atomic<int> outputChannels { 0 };
     std::unique_ptr<std::atomic<int>[]> trackBus;

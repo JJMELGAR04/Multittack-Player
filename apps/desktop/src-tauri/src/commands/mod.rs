@@ -14,4 +14,5 @@ pub mod database;
 pub mod engine;
 pub mod import;
 pub mod live;
+pub mod performance;
 pub mod studio;

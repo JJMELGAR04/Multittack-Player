@@ -154,6 +154,10 @@ static void testTransportWithoutSong (lp_engine* e)
     CHECK (lp_engine_cancel_jump (e) == LP_OK);
     CHECK (lp_engine_set_transpose (e, 2.0) == LP_ERR_INVALID_STATE);
     CHECK (lp_engine_set_transpose (e, 20.0) == LP_ERR_INVALID_ARGUMENT);
+    CHECK (lp_engine_set_cache (e, "relative/dir", 100) == LP_ERR_INVALID_ARGUMENT);
+    CHECK (lp_engine_set_cache (e, nullptr, 0) == LP_OK);
+    CHECK (lp_engine_set_economy (e, 1) == LP_OK);
+    CHECK (lp_engine_set_economy (e, 0) == LP_OK);
     CHECK (lp_engine_preload_song (e, "{\"tracks\":[]}") == LP_OK);
     CHECK (lp_engine_preload_song (e, "nope") == LP_ERR_INVALID_ARGUMENT);
     size_t required = 0;

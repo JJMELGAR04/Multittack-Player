@@ -194,7 +194,7 @@ float computeBusPeak (const SongData& song, const std::vector<int>& buses, int b
                 continue;
             const bool mono = a.getNumChannels() == 1;
             for (int c = 0; c < 2; ++c)
-                sum.addFrom (c, 0, a, mono ? 0 : c, (int) start, avail, mono ? 0.70710678f : 1.0f);
+                sum.addFrom (c, 0, a, mono ? 0 : c, (int) start, avail, mono && ! song.tracks[i].dualMono ? 0.70710678f : 1.0f);
         }
         for (int c = 0; c < 2; ++c)
             peak = juce::jmax (peak, sum.getMagnitude (c, 0, n));
@@ -223,11 +223,127 @@ std::vector<juce::uint8> computeMixPeaks (const SongData& song, const std::vecto
 }
 
 //==============================================================================
-SongLoader::SongLoader (std::vector<TrackRequest> tracks, double targetSampleRate, juce::uint64 id)
+// ---- Decoded-audio cache -----------------------------------------------------
+// Decoding MP3s and converting the sample rate is the slow part of loading a
+// song. The result is kept on disk (raw 32-bit float, bit-exact), so opening
+// the same song again only reads it back. Entries are keyed by the source
+// file (path, size, date) and the device sample rate; stale ones never match.
+
+namespace
+{
+constexpr juce::uint32 cacheMagic = 0x3143504c; // "LPC1"
+constexpr juce::uint32 cacheVersion = 1;
+}
+
+juce::File SongLoader::cacheFileFor (const juce::File& source) const
+{
+    const auto key = source.getFullPathName() + "|" + juce::String (source.getSize()) + "|"
+                     + juce::String (source.getLastModificationTime().toMilliseconds()) + "|" + juce::String (sampleRate, 1);
+    const auto hex = juce::String::toHexString ((juce::int64) key.hashCode64()) + juce::String::toHexString (key.toLowerCase().hashCode());
+    return cacheDir.getChildFile (hex + ".lpc");
+}
+
+bool SongLoader::readCache (const juce::File& source, TrackData& out) const
+{
+    if (cacheDir == juce::File())
+        return false;
+    const auto file = cacheFileFor (source);
+    juce::FileInputStream in (file);
+    if (! in.openedOk())
+        return false;
+    if ((juce::uint32) in.readInt() != cacheMagic || (juce::uint32) in.readInt() != cacheVersion)
+        return false;
+    if (std::abs (in.readDouble() - sampleRate) > 0.5 || in.readInt64() != source.getSize()
+        || in.readInt64() != source.getLastModificationTime().toMilliseconds() || in.readString() != source.getFullPathName())
+        return false;
+    const int channels = in.readInt();
+    const auto frames = in.readInt64();
+    const int sourceRate = in.readInt();
+    const int sourceChannels = in.readInt();
+    const bool resampled = in.readByte() != 0;
+    const bool dualMono = in.readByte() != 0;
+    if (channels < 1 || channels > 2 || frames <= 0 || frames > maxSongSamples
+        || in.getTotalLength() - in.getPosition() != (juce::int64) channels * frames * (juce::int64) sizeof (float))
+        return false;
+    juce::AudioBuffer<float> audio (channels, (int) frames);
+    for (int c = 0; c < channels; ++c)
+        if (in.read (audio.getWritePointer (c), (int) (frames * (juce::int64) sizeof (float))) != (int) (frames * (juce::int64) sizeof (float)))
+            return false;
+    out.audio = std::move (audio);
+    out.sourceSampleRate = sourceRate;
+    out.sourceChannels = sourceChannels;
+    out.resampled = resampled;
+    out.dualMono = dualMono;
+    out.fromCache = true;
+    file.setLastModificationTime (juce::Time::getCurrentTime()); // recently used: kept longer
+    return true;
+}
+
+void SongLoader::writeCache (const juce::File& source, const TrackData& t) const
+{
+    if (cacheDir == juce::File() || ! cacheDir.createDirectory())
+        return;
+    const auto file = cacheFileFor (source);
+    const auto tmp = file.withFileExtension ("tmp");
+    {
+        juce::FileOutputStream out (tmp);
+        if (! out.openedOk())
+            return;
+        out.setPosition (0);
+        out.truncate();
+        out.writeInt ((int) cacheMagic);
+        out.writeInt ((int) cacheVersion);
+        out.writeDouble (sampleRate);
+        out.writeInt64 (source.getSize());
+        out.writeInt64 (source.getLastModificationTime().toMilliseconds());
+        out.writeString (source.getFullPathName());
+        out.writeInt (t.audio.getNumChannels());
+        out.writeInt64 (t.audio.getNumSamples());
+        out.writeInt (t.sourceSampleRate);
+        out.writeInt (t.sourceChannels);
+        out.writeByte (t.resampled ? 1 : 0);
+        out.writeByte (t.dualMono ? 1 : 0);
+        for (int c = 0; c < t.audio.getNumChannels(); ++c)
+            out.write (t.audio.getReadPointer (c), (size_t) t.audio.getNumSamples() * sizeof (float));
+        out.flush();
+        if (out.getStatus().failed())
+        {
+            tmp.deleteFile(); // disk full or similar: simply no cache
+            return;
+        }
+    }
+    if (! tmp.moveFileTo (file))
+        tmp.deleteFile();
+}
+
+void SongLoader::trimCache() const
+{
+    if (cacheDir == juce::File() || cacheMaxBytes <= 0)
+        return;
+    auto files = cacheDir.findChildFiles (juce::File::findFiles, false, "*.lpc");
+    std::sort (files.begin(), files.end(), [] (const juce::File& a, const juce::File& b) {
+        return a.getLastModificationTime() < b.getLastModificationTime();
+    });
+    juce::int64 total = 0;
+    for (auto& f : files)
+        total += f.getSize();
+    // Oldest first, never the files of the song just loaded.
+    for (auto& f : files)
+    {
+        if (total <= cacheMaxBytes || f.getLastModificationTime() >= startedAt - juce::RelativeTime::seconds (1.0))
+            break;
+        total -= f.getSize();
+        f.deleteFile();
+    }
+}
+
+SongLoader::SongLoader (std::vector<TrackRequest> tracks, double targetSampleRate, juce::uint64 id, juce::File cache, juce::int64 cacheMax)
     : juce::Thread ("LIVEPLAYER loader"),
       requests (std::move (tracks)),
       sampleRate (targetSampleRate),
       loadId (id),
+      cacheDir (std::move (cache)),
+      cacheMaxBytes (cacheMax),
       trackProgress (requests.size())
 {
 }
@@ -287,6 +403,12 @@ bool SongLoader::decodeTrack (size_t index, TrackData& out, std::string& err)
         return false;
     }
 
+    if (readCache (file, out))
+    {
+        trackProgress[index].store (1.0f);
+        return true;
+    }
+
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
     std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
@@ -318,6 +440,17 @@ bool SongLoader::decodeTrack (size_t index, TrackData& out, std::string& err)
         trackProgress[index].store (0.85f * (float) (pos + n) / (float) length);
     }
 
+    // "Stereo" files whose two channels are identical (very common for stems)
+    // are kept as one channel: half the memory, same sound (played at full
+    // level on both sides, see SongRenderer).
+    int keep = channels;
+    if (channels == 2
+        && std::memcmp (decoded.getReadPointer (0), decoded.getReadPointer (1), (size_t) length * sizeof (float)) == 0)
+    {
+        keep = 1;
+        out.dualMono = true;
+    }
+
     // MP3: remove encoder + decoder delay so the stem lines up with WAV stems.
     juce::int64 start = 0, usable = length;
     if (out.format == "MP3")
@@ -340,8 +473,8 @@ bool SongLoader::decodeTrack (size_t index, TrackData& out, std::string& err)
 
     if (std::abs (reader->sampleRate - sampleRate) < 0.5)
     {
-        out.audio.setSize (channels, (int) usable);
-        for (int c = 0; c < channels; ++c)
+        out.audio.setSize (keep, (int) usable);
+        for (int c = 0; c < keep; ++c)
             out.audio.copyFrom (c, 0, decoded, c, (int) start, (int) usable);
     }
     else
@@ -349,8 +482,8 @@ bool SongLoader::decodeTrack (size_t index, TrackData& out, std::string& err)
         // High-quality sample-rate conversion (r8brain, 24-bit grade, linear phase).
         out.resampled = true;
         const auto outLength = (int) std::ceil ((double) usable * sampleRate / reader->sampleRate);
-        out.audio.setSize (channels, outLength);
-        for (int c = 0; c < channels; ++c)
+        out.audio.setSize (keep, outLength);
+        for (int c = 0; c < keep; ++c)
         {
             if (threadShouldExit())
                 return false;
@@ -359,6 +492,7 @@ bool SongLoader::decodeTrack (size_t index, TrackData& out, std::string& err)
         }
     }
 
+    writeCache (file, out);
     trackProgress[index].store (1.0f);
     return true;
 }
@@ -434,7 +568,11 @@ void SongLoader::run()
     }
 
     for (const auto& t : data->tracks)
+    {
         data->lengthSamples = juce::jmax (data->lengthSamples, (juce::int64) t.audio.getNumSamples());
+        data->cachedTracks += t.fromCache ? 1 : 0;
+    }
+    trimCache();
 
     // Waveform overviews.
     const int hop = juce::jmax (1, (int) std::lround (sampleRate / 100.0));
@@ -447,6 +585,7 @@ void SongLoader::run()
         roles.push_back (t.role);
     auto mixOverview = computeMixPeaks (*data, roles);
 
+    data->loadSeconds = (juce::Time::getMillisecondCounter() - startedMs) / 1000.0;
     {
         std::scoped_lock lock (mutex);
         song = std::move (data);

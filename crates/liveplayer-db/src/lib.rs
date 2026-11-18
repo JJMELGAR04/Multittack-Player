@@ -128,6 +128,21 @@ impl Database {
         })
     }
 
+    /// Consistent copy of the whole database into `path` (works while it is in use).
+    pub fn backup_into(&self, path: &Path) -> Result<(), DbError> {
+        if path.exists() {
+            std::fs::remove_file(path).map_err(|source| DbError::CreateDir { path: path.to_path_buf(), source })?;
+        }
+        self.conn.execute("VACUUM INTO ?1", [path.to_string_lossy()])?;
+        Ok(())
+    }
+
+    /// True when SQLite finds the file healthy.
+    pub fn quick_check(&self) -> Result<bool, DbError> {
+        let r: String = self.conn.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
+        Ok(r == "ok")
+    }
+
     /// Generic key/value settings (JSON-encoded values).
     pub fn set_setting(&self, key: &str, json_value: &str) -> Result<(), DbError> {
         self.conn.execute(

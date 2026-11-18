@@ -48,7 +48,11 @@ fn main() {
             }
         }
         "macos" => {
-            for fw in ["CoreAudio", "CoreMIDI", "AudioToolbox", "Accelerate", "Foundation", "AppKit", "IOKit"] {
+            // Frameworks used by the JUCE modules (core, events, audio basics/devices/formats, dsp).
+            for fw in [
+                "CoreAudio", "CoreMIDI", "AudioToolbox", "Accelerate", "Foundation", "AppKit", "Cocoa", "IOKit", "Security",
+                "QuartzCore", "CoreFoundation",
+            ] {
                 println!("cargo:rustc-link-lib=framework={fw}");
             }
             println!("cargo:rustc-link-lib=c++");

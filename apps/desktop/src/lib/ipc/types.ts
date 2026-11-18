@@ -127,6 +127,10 @@ export interface LoadedTrack {
   durationSec: number;
   /** Converted to the device sample rate (r8brain, high quality). */
   resampled: boolean;
+  /** Stereo file with identical channels, kept as one (half the memory, same sound). */
+  dualMono?: boolean;
+  /** Came from the decoded-audio cache. */
+  fromCache?: boolean;
   role: "music" | "click" | "guide";
   bus: Bus;
 }
@@ -160,6 +164,10 @@ export interface LoadedSong {
   sampleRate: number;
   durationSec: number;
   memoryMB: number;
+  /** How long loading took (s) and how many tracks came from the cache. */
+  loadSeconds?: number;
+  cachedTracks?: number;
+  economy?: boolean;
   beatsPerBar: number;
   /** Automatic level trim (dB, <= 0) so the summed stems never clip. */
   mainTrimDb: number;
@@ -298,6 +306,20 @@ export interface TransportState {
   jumpsDone: number;
   /** Key change of the music tracks (semitones). */
   transpose: number;
+}
+
+// ---- Phase 6: performance, cache, log ---------------------------------------------
+
+export interface PerformanceInfo {
+  economy: boolean;
+  cacheLimitMb: number;
+  cacheUsedMb: number;
+  cacheFiles: number;
+  cacheDir: string;
+  logPath: string;
+  /** Daily library copies, newest first ("liveplayer-2026-11-17.sqlite3"). */
+  backups: string[];
+  backupsDir: string;
 }
 
 // ---- Phase 5: Song Editor, setlists, backup -----------------------------------

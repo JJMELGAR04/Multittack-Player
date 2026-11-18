@@ -242,8 +242,8 @@ void Player::setSong (SongPtr newSong)
         trackPitchFixed[(size_t) t].store (song->tracks[(size_t) t].role != roleMusic);
     }
     numTracks = n;
-    renderer.prepare (song);
-    altRenderer.prepare (song);
+    renderer.prepare (song, economy);
+    altRenderer.prepare (song, economy);
     ring.prepare (numTracks * 2, ringChunks);
 
     seekTarget.store (0.0);
@@ -431,6 +431,7 @@ void Player::audioDeviceAboutToStart (juce::AudioIODevice* device)
     const int lookahead = juce::jmax (8, (int) std::lround (0.001 * deviceSampleRate)); // 1 ms
     mainLimiter.prepare (deviceSampleRate, lookahead);
     monitorLimiter.prepare (deviceSampleRate, lookahead);
+    outputLimiter.prepare (deviceSampleRate, lookahead);
     outputChannels.store (device->getActiveOutputChannels().countNumberOfSetBits());
     fadeStep = (float) (1.0 / (fadeSeconds * deviceSampleRate));
     state = State::idle;
@@ -619,11 +620,26 @@ int Player::renderSubBlock (float* const* outputs, int numOutputs, int offset, i
     const int mode = outputMode.load (std::memory_order_relaxed);
     const int mainCh = mainChannel.load (std::memory_order_relaxed);
     const int monCh = monitorChannel.load (std::memory_order_relaxed);
+    // When both buses share outputs (rehearsal / mono) their sum gets its own
+    // safety limiter: each bus is limited, but together they could clip.
+    float* sumL = outScratch.getWritePointer (0);
+    float* sumR = outScratch.getWritePointer (1);
+    const bool sharedOutputs = numOutputs == 1 || ! (mode == 1 || (mode == 2 && numOutputs >= 4));
+    if (sharedOutputs)
+    {
+        for (int i = 0; i < frames; ++i)
+        {
+            sumL[i] = mainL[i] + monL[i];
+            sumR[i] = mainR[i] + monR[i];
+        }
+        outputLimiter.process (sumL, sumR, frames);
+    }
+
     if (numOutputs == 1)
     {
         if (auto* o = out (0))
             for (int i = 0; i < frames; ++i)
-                o[i] += 0.5f * (mainL[i] + mainR[i] + monL[i] + monR[i]);
+                o[i] += 0.5f * (sumL[i] + sumR[i]);
     }
     else if (mode == 2 && numOutputs >= 4)
     {
@@ -647,15 +663,9 @@ int Player::renderSubBlock (float* const* outputs, int numOutputs, int offset, i
     else
     {
         if (auto* o = out (mainCh))
-        {
-            juce::FloatVectorOperations::add (o, mainL, frames);
-            juce::FloatVectorOperations::add (o, monL, frames);
-        }
+            juce::FloatVectorOperations::add (o, sumL, frames);
         if (auto* o = out (mainCh + 1))
-        {
-            juce::FloatVectorOperations::add (o, mainR, frames);
-            juce::FloatVectorOperations::add (o, monR, frames);
-        }
+            juce::FloatVectorOperations::add (o, sumR, frames);
     }
 
     readOffset += frames;

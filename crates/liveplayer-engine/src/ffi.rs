@@ -3,7 +3,7 @@
 
 use std::ffi::{c_char, c_int};
 
-pub const ABI_VERSION: u32 = 7;
+pub const ABI_VERSION: u32 = 8;
 
 #[repr(C)]
 pub struct lp_engine {
@@ -81,6 +81,8 @@ unsafe extern "C" {
     pub fn lp_engine_schedule_jump(engine: *mut lp_engine, at_sec: f64, target_sec: f64) -> lp_result;
     pub fn lp_engine_cancel_jump(engine: *mut lp_engine) -> lp_result;
     pub fn lp_engine_set_transpose(engine: *mut lp_engine, semitones: f64) -> lp_result;
+    pub fn lp_engine_set_cache(engine: *mut lp_engine, dir: *const c_char, max_mb: i64) -> lp_result;
+    pub fn lp_engine_set_economy(engine: *mut lp_engine, on: i32) -> lp_result;
     pub fn lp_engine_set_loop(engine: *mut lp_engine, start_sec: f64, end_sec: f64) -> lp_result;
     pub fn lp_engine_preload_song(engine: *mut lp_engine, request_json: *const c_char) -> lp_result;
     pub fn lp_engine_get_output_info(

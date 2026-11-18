@@ -1,7 +1,11 @@
 cmake_minimum_required(VERSION 3.24)
 
+# macOS 11 (Big Sur) or newer: the engine uses C++20 threading primitives
+# (std::binary_semaphore) that need it. Must be set before project().
+set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
+
 project(liveplayer_engine
-    VERSION 0.5.0
+    VERSION 0.6.0
     DESCRIPTION "LIVEPLAYER native real-time audio engine"
     LANGUAGES C CXX)
 
@@ -192,6 +196,13 @@ if(LIVEPLAYER_ENGINE_BUILD_TESTS)
     target_include_directories(liveplayer_inspect SYSTEM PRIVATE ${_lp_test_incs})
     target_link_libraries(liveplayer_inspect PRIVATE liveplayer_engine)
 
+    # Endurance test (also a developer tool: liveplayer_soak <dir> <minutes> <speed>).
+    add_executable(liveplayer_soak tests/soak_test.cpp)
+    target_include_directories(liveplayer_soak PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(liveplayer_soak PRIVATE ${_lp_test_defs})
+    target_include_directories(liveplayer_soak SYSTEM PRIVATE ${_lp_test_incs})
+    target_link_libraries(liveplayer_soak PRIVATE liveplayer_engine)
+
     set(LIVEPLAYER_TEST_AUDIO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../test-audio")
     find_program(NODE_EXECUTABLE node)
     if(NODE_EXECUTABLE)
@@ -201,4 +212,7 @@ if(LIVEPLAYER_ENGINE_BUILD_TESTS)
     endif()
     add_test(NAME engine_audio COMMAND liveplayer_engine_audio_tests ${LIVEPLAYER_TEST_AUDIO_DIR})
     set_tests_properties(engine_audio PROPERTIES FIXTURES_REQUIRED test_audio TIMEOUT 900)
+    # 2 minutes of audio at 6x speed with song changes, jumps, loops, tempo and key changes.
+    add_test(NAME engine_soak COMMAND liveplayer_soak ${LIVEPLAYER_TEST_AUDIO_DIR} 2 6)
+    set_tests_properties(engine_soak PROPERTIES FIXTURES_REQUIRED test_audio TIMEOUT 300)
 endif()

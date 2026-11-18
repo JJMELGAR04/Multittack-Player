@@ -67,6 +67,10 @@ public:
     /** Decodes a song in the background (low priority) so that a later
         loadSong() with the same tracks starts instantly. Empty = forget it. */
     bool preloadSong (std::vector<TrackRequest> tracks);
+    /** Folder for decoded audio (empty = no cache) and its size limit. */
+    void setCache (juce::File dir, juce::int64 maxBytes);
+    /** Lighter time-stretch / key change; re-installs the current song (keeps position). */
+    bool setEconomy (bool on);
     juce::String getSongStatusJson();
     bool getPeaks (int track, std::vector<juce::uint8>& out);
     /** downbeatOffsetSec < 0: estimate the bar grid for the given bpm. */
@@ -102,6 +106,7 @@ private:
     void normaliseRouting();
     void startRateReload();
     void finishRateReload();
+    void reinstall (SongPtr s);
     void noteDeviceEvent (std::string message);
 
     juce::AudioDeviceManager deviceManager;
@@ -122,6 +127,8 @@ private:
     std::unique_ptr<SongLoader> loader;
     bool loaderIsReload = false; // re-decoding the same song for a new sample rate
     std::vector<TrackRequest> songRequests;
+    juce::File cacheDir;
+    juce::int64 cacheMaxBytes = 0;
 
     // Next song decoded ahead of time (setlists).
     std::unique_ptr<SongLoader> preloader;

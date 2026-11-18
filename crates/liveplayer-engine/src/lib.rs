@@ -217,6 +217,12 @@ pub struct LoadedTrack {
     pub resampled: bool,
     pub role: String,
     pub bus: String,
+    /// Stereo file with identical channels, kept as one (half the memory, same sound).
+    #[serde(default)]
+    pub dual_mono: bool,
+    /// Came from the decoded-audio cache.
+    #[serde(default)]
+    pub from_cache: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -231,6 +237,14 @@ pub struct LoadedSong {
     pub main_trim_db: f64,
     pub monitor_trim_db: f64,
     pub tracks: Vec<LoadedTrack>,
+    /// How long loading took (seconds) and how many tracks came from the cache.
+    #[serde(default)]
+    pub load_seconds: f64,
+    #[serde(default)]
+    pub cached_tracks: u32,
+    /// Economy mode (lighter tempo / key processing) in use.
+    #[serde(default)]
+    pub economy: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -675,6 +689,22 @@ impl Engine {
             jumps_done: s.jumps_done,
             transpose: s.transpose,
         })
+    }
+
+    /// Decoded-audio cache folder (None = off) and its size limit in MB.
+    pub fn set_cache(&self, dir: Option<&std::path::Path>, max_mb: i64) -> Result<(), EngineError> {
+        self.check_thread()?;
+        let c = CString::new(dir.map(|d| d.to_string_lossy().into_owned()).unwrap_or_default())
+            .map_err(|_| EngineError::InvalidArgument(": ruta con carácter NUL".into()))?;
+        // SAFETY: valid engine pointer and NUL-terminated string; owning thread.
+        self.map(unsafe { ffi::lp_engine_set_cache(self.raw.as_ptr(), c.as_ptr(), max_mb) })
+    }
+
+    /// Economy mode (lighter tempo / key processing for modest computers).
+    pub fn set_economy(&self, on: bool) -> Result<(), EngineError> {
+        self.check_thread()?;
+        // SAFETY: valid engine pointer; owning thread.
+        self.map(unsafe { ffi::lp_engine_set_economy(self.raw.as_ptr(), i32::from(on)) })
     }
 
     /// Key change of the music tracks in semitones (-12..12); click and cues are never shifted.
