@@ -43,6 +43,8 @@ Carga las pistas de cada canción (batería, bajo, teclados, voces, click, cues�
 ### 1. Importar una canción
 **Songs › Importar canción**, o arrastra el `.zip` o la carpeta a la ventana. Revisa que cada pista tenga el instrumento correcto, elige el tono original y pulsa **Guardar canción**.
 
+![Songs: la biblioteca de canciones con tono, BPM, compás, duración y pistas](docs/img/songs.png)
+
 ### 2. Mezclar en Multitrack Studio
 - Busca la canción en el buscador de arriba a la izquierda.
 - **Espacio** reproduce o pausa · **Esc** detiene · **Inicio** vuelve al principio · **1–9** saltan a la parte 1, 2, 3…

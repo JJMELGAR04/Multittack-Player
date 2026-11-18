@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Fase actual** | **FASE 7 — INSTALADORES PARA COMPARTIR LA APP** |
-| **Estado** | Instalador de Windows listo y probado en este equipo. ⏳ **Falta la prueba de instalación desde cero en otra computadora, que se hará junto con el usuario**, y después su aprobación |
-| **Rama** | `feature/phase-7-installers` (se fusionará en `main` cuando se apruebe) |
+| **Estado** | Instalador de Windows listo y probado en este equipo. **Fusionada en `main` a pedido del usuario (2026-11-18).** ⏳ Pendiente: la prueba de instalación desde cero en otra computadora, junto con el usuario, y la versión de Mac |
+| **Rama** | `feature/phase-7-installers` (fusionada en `main`) |
 | **Versión** | **1.0.0** |
 | **Fecha** | 2026-11-17 |
 | **Fases anteriores** | Fases 1 a 6 ✅ (informes en [`docs/fases/`](docs/fases/)) |
@@ -23,6 +23,7 @@
   - se puede **escribir el inicio y el final exactos** con decimales (`1:23.45` o `1:23,45`);
   - flechas ‹ › para ajustar fino, de a **1 tiempo, 0,1 s o 0,01 s**;
   - el final de una parte es el inicio de la siguiente (sin huecos, para que los saltos en Live siempre tengan destino).
+- **README** con qué hace la app, cómo funciona, guía de uso y capturas presentables (biblioteca de demostración; nunca la del usuario). Se regeneran con `node scripts/readme-shots.mjs <exe> ../../docs/img` en `apps/desktop`.
 - **Revisión de robustez** (sin agregar carga):
   - **clics rápidos**: en tono, tempo ±1, flechas de las partes (Song Editor y Studio), cada clic cuenta. Antes, dos clics rápidos podían contar como uno;
   - **buscador de canciones** del Studio: la lista se carga al abrirse los resultados, no solo al recibir el foco;
@@ -53,13 +54,14 @@ Leyenda: ✅ Implementado y probado · ⏳ Pendiente
 | UI (Vitest) | ✅ 45/45 (nueva: leer tiempos escritos) |
 | Motor C++ (4 suites) | ✅ 4/4, dos ejecuciones seguidas |
 | Rust (`liveplayer-db` 15, `liveplayer-engine` 2, `liveplayer-desktop` 8) | ✅ |
-| E2E sobre la app real | ✅ **119/119** (nuevas: Acerca de, tiempos exactos con decimales, flecha fina, renombrar pista y cambiar instrumento desde el Song Editor) |
+| E2E sobre la app real | ✅ **120/120** (incluye que la forma de onda del Song Editor se vea con su altura) (nuevas: Acerca de, tiempos exactos con decimales, flecha fina, renombrar pista y cambiar instrumento desde el Song Editor) |
 | Resistencia a 2×: 10 min de audio (12 cambios de canción, 84 saltos, 29 bucles, 59 tempo, 47 tono) | ✅ 0 cortes, 0 muestras inválidas |
 
 ### Corregido durante la fase
 - **La app necesitaba `MSVCP140.dll`** (el runtime de C++ de Microsoft). En un Windows recién instalado no habría abierto. Ahora todo va dentro del `.exe` (`.cargo/config.toml` y el motor con `/MT`).
 - El motor seguía diciendo versión 0.6.0; ahora 1.0.0.
 - Dos clics rápidos en «Subir medio tono» podían contar como uno (encontrado por la prueba E2E). Lo mismo pasaba con tempo ±1 y las flechas de las partes.
+- La forma de onda y las partes del Song Editor se aplastaban a altura 0 cuando la página era más alta que la ventana (al agregar «Pistas»). Corregido y cubierto por la prueba E2E.
 - El buscador de canciones del Studio podía quedarse vacío si la ventana estaba en segundo plano al recibir el foco.
 - La prueba automática de resistencia corría a 6× la velocidad real y fallaba 1 de cada 3 veces con un solo corte (a 6× el margen es de 25 ms, frente a 150 ms en uso normal; ya estaba en el informe de la fase 6). Ahora corre a 2×, que es el mismo margen que en uso real. La de 6× sigue disponible a mano: `liveplayer_soak <carpeta> 60 6`.
 
