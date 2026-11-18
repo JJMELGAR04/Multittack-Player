@@ -501,6 +501,12 @@ try {
   const before = await invoke("studio_get_song", { songId: folderSong.id });
   const partsShown = await evaluate(`document.querySelectorAll("[data-editor-part]").length`);
   check("Song Editor shows the song's parts on the waveform", partsShown === before.sections.length, `${partsShown} parts`);
+  // The waveform and the parts must be visible (real height), even when the
+  // page is taller than the window (many tracks in the Pistas section).
+  const timelineH = await evaluate(`Math.round(document.querySelector("[data-editor-timeline]").getBoundingClientRect().height)`);
+  const partH = await evaluate(`Math.round(document.querySelector("[data-editor-part]").getBoundingClientRect().height)`);
+  const pageTaller = await evaluate(`(() => { const t = document.querySelector("[data-editor-timeline]").parentElement; return t.scrollHeight > t.clientHeight; })()`);
+  check("Song Editor: waveform and parts visible at full height", timelineH >= 200 && partH >= 25, `timeline ${timelineH}px, part ${partH}px, page taller than window: ${pageTaller}`);
   await shot("10-song-editor");
 
   // Placement is free by default; with "Ajuste al compás" on, cuts snap to bar lines.

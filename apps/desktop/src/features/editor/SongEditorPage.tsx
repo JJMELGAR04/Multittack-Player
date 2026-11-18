@@ -447,7 +447,7 @@ export function SongEditorPage() {
           </div>
 
           {/* Timeline */}
-          <div ref={scrollRef} className="relative mx-5 overflow-x-auto rounded-xl border border-ink-800 bg-ink-950" data-editor-timeline>
+          <div ref={scrollRef} className="relative mx-5 shrink-0 overflow-x-auto rounded-xl border border-ink-800 bg-ink-950" data-editor-timeline>
             <div className="relative" style={{ width: contentW, height: 26 + 38 + WAVE_H }}>
               {/* Ruler */}
               <div className="absolute inset-x-0 top-0 h-[26px] border-b border-ink-800">
