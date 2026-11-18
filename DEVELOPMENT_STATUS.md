@@ -15,6 +15,19 @@
 - Si alguien tiene el **repositorio de GitHub**, que pueda instalarla desde ahí: guía para las dos formas.
 - La prueba de instalación desde cero se hace **junto con el usuario**.
 
+## Cambios pedidos por el usuario durante la fase (incluidos)
+- **Acceso directo «LIVEPLAYER» en el Escritorio** de este equipo.
+- **Song Editor › Pistas**: corregir el nombre de cada audio y elegir qué instrumento es (se guarda solo). Debajo se ve el nombre del archivo original. Antes, borrar todo el nombre para reescribirlo devolvía el nombre viejo.
+- **Partes con total libertad**:
+  - ya **no se ajustan al compás por defecto** (el botón «Ajuste al compás» sigue disponible);
+  - se puede **escribir el inicio y el final exactos** con decimales (`1:23.45` o `1:23,45`);
+  - flechas ‹ › para ajustar fino, de a **1 tiempo, 0,1 s o 0,01 s**;
+  - el final de una parte es el inicio de la siguiente (sin huecos, para que los saltos en Live siempre tengan destino).
+- **Revisión de robustez** (sin agregar carga):
+  - **clics rápidos**: en tono, tempo ±1, flechas de las partes (Song Editor y Studio), cada clic cuenta. Antes, dos clics rápidos podían contar como uno;
+  - **buscador de canciones** del Studio: la lista se carga al abrirse los resultados, no solo al recibir el foco;
+  - **más ligera con la ventana minimizada**: la interfaz deja de consultar al motor (unas 50 consultas por segundo) mientras nadie la ve. El audio no se ve afectado: el motor toca por su cuenta. La vigilancia de la interfaz de audio (desconexión) sigue activa.
+
 ## Funcionalidades
 
 Leyenda: ✅ Implementado y probado · ⏳ Pendiente
@@ -32,20 +45,22 @@ Leyenda: ✅ Implementado y probado · ⏳ Pendiente
 | **Mac**: configuración del `.dmg` (firma *ad hoc* gratuita para que funcione en Mac con chip Apple) y flujo de GitHub «Installers» que genera `.exe` y `.dmg` (Apple Silicon e Intel) | ⏳ | Se lanza a mano en GitHub › Actions › Installers. Pendiente de que GitHub ejecute flujos en la cuenta |
 | **Prueba de instalación desde cero en otra computadora** | ⏳ | **Se hará junto con el usuario** |
 
-## Pruebas realizadas (2026-11-17)
+## Pruebas realizadas (2026-11-18)
 
 | Suite | Resultado |
 |---|---|
 | Typecheck | ✅ 0 errores |
-| UI (Vitest) | ✅ 44/44 |
+| UI (Vitest) | ✅ 45/45 (nueva: leer tiempos escritos) |
 | Motor C++ (4 suites) | ✅ 4/4, dos ejecuciones seguidas |
 | Rust (`liveplayer-db` 15, `liveplayer-engine` 2, `liveplayer-desktop` 8) | ✅ |
-| E2E sobre la app real | ✅ **115/115** |
+| E2E sobre la app real | ✅ **119/119** (nuevas: Acerca de, tiempos exactos con decimales, flecha fina, renombrar pista y cambiar instrumento desde el Song Editor) |
 | Resistencia a 2×: 10 min de audio (12 cambios de canción, 84 saltos, 29 bucles, 59 tempo, 47 tono) | ✅ 0 cortes, 0 muestras inválidas |
 
 ### Corregido durante la fase
 - **La app necesitaba `MSVCP140.dll`** (el runtime de C++ de Microsoft). En un Windows recién instalado no habría abierto. Ahora todo va dentro del `.exe` (`.cargo/config.toml` y el motor con `/MT`).
 - El motor seguía diciendo versión 0.6.0; ahora 1.0.0.
+- Dos clics rápidos en «Subir medio tono» podían contar como uno (encontrado por la prueba E2E). Lo mismo pasaba con tempo ±1 y las flechas de las partes.
+- El buscador de canciones del Studio podía quedarse vacío si la ventana estaba en segundo plano al recibir el foco.
 - La prueba automática de resistencia corría a 6× la velocidad real y fallaba 1 de cada 3 veces con un solo corte (a 6× el margen es de 25 ms, frente a 150 ms en uso normal; ya estaba en el informe de la fase 6). Ahora corre a 2×, que es el mismo margen que en uso real. La de 6× sigue disponible a mano: `liveplayer_soak <carpeta> 60 6`.
 
 ## Limitaciones conocidas

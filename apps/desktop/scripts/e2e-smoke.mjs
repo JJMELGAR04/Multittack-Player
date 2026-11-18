@@ -503,6 +503,10 @@ try {
   check("Song Editor shows the song's parts on the waveform", partsShown === before.sections.length, `${partsShown} parts`);
   await shot("10-song-editor");
 
+  // Placement is free by default; with "Ajuste al compás" on, cuts snap to bar lines.
+  check("Song Editor: free placement by default (no bar snapping)", (await evaluate(`document.querySelector("[aria-pressed][title^='Activado']")?.getAttribute("aria-pressed")`)) === "false");
+  await evaluate(`document.querySelector("[aria-pressed][title^='Activado']").click()`);
+  await sleep(100);
   // Drag the start of the 2nd part to the right: it snaps to a bar line and is saved.
   const secondLabel = await evaluate(`document.querySelectorAll("[data-editor-part]")[1].dataset.editorPart`);
   await drag(`[aria-label='Inicio de ${secondLabel}']`, 90);
@@ -530,6 +534,40 @@ try {
   await waitSaved("data-editor-saved");
   after = await invoke("studio_get_song", { songId: folderSong.id });
   check("undo (Ctrl+Z) removes it again and saves", after.sections.length === partsShown && !after.sections.some((x) => x.kind === "interlude"));
+
+  // Free placement: type an exact start and end with decimals (not on a bar line).
+  await evaluate(`document.querySelector("[aria-pressed][title^='Activado']").click()`); // snapping off again
+  await evaluate(`document.querySelectorAll("[data-editor-part]")[1].click()`);
+  await sleep(150);
+  const typeTime = async (label, text) => {
+    await evaluate(`document.querySelector("input[aria-label='${label}']").focus()`);
+    await setValue(`input[aria-label='${label}']`, text);
+    await evaluate(`document.querySelector("input[aria-label='${label}']").blur()`);
+    await sleep(150);
+  };
+  await typeTime("Empieza en", "0:12.37");
+  await typeTime("Termina en", "0:31,85");
+  await waitSaved("data-editor-saved");
+  after = await invoke("studio_get_song", { songId: folderSong.id });
+  check("type an exact start and end with decimals (12.37 s → 31.85 s), saved", Math.abs(after.sections[1].startSec - 12.37) < 0.001 && Math.abs(after.sections[2].startSec - 31.85) < 0.001, `${after.sections[1].startSec} → ${after.sections[2].startSec}`);
+  await evaluate(`document.querySelector("[aria-label='Termina en: después']").click()`); // default step 0.1 s
+  await waitSaved("data-editor-saved");
+  after = await invoke("studio_get_song", { songId: folderSong.id });
+  check("fine nudge of the end (+0.1 s)", Math.abs(after.sections[2].startSec - 31.95) < 0.001, String(after.sections[2].startSec));
+
+  // Tracks: rename a track and change what it is, from the Song Editor.
+  await evaluate(`document.querySelector("input[aria-label='Nombre de la pista 2']").focus()`);
+  await setValue("input[aria-label='Nombre de la pista 2']", "Bajo eléctrico");
+  await evaluate(`document.querySelector("input[aria-label='Nombre de la pista 2']").blur()`);
+  await setValue("select[aria-label='Qué es la pista 2']", "keys", "change");
+  let renamed = null;
+  for (let i = 0; i < 60; i++) {
+    renamed = (await invoke("studio_get_song", { songId: folderSong.id })).tracks.find((t) => t.position === 1);
+    if (renamed?.name === "Bajo eléctrico" && renamed.role === "keys") break;
+    await sleep(100);
+  }
+  check("Song Editor: rename a track and change its instrument (saved)", renamed?.name === "Bajo eléctrico" && renamed.role === "keys", `${renamed?.name} / ${renamed?.role}`);
+  await shot("10b-song-editor-tracks");
 
   // Song details.
   await setValue("[aria-label='Tonalidad']", "D", "change");

@@ -205,10 +205,10 @@ export function useStudio(options: StudioOptions = {}): Studio {
   const busy = status?.engine.state === "loading" || status?.engine.analysis?.state === "running";
   useEffect(() => {
     if (!native) return;
-    const id = window.setInterval(
-      () => backend.studioStatus().then(setStatus, fail),
-      busy ? 250 : 1500,
-    );
+    // Minimised window: nobody sees the screen, so no polling (the engine plays on its own).
+    const id = window.setInterval(() => {
+      if (!document.hidden) backend.studioStatus().then(setStatus, fail);
+    }, busy ? 250 : 1500);
     return () => window.clearInterval(id);
   }, [native, busy, fail]);
 
@@ -217,6 +217,7 @@ export function useStudio(options: StudioOptions = {}): Studio {
     if (!native) return;
     let alive = true;
     const id = window.setInterval(() => {
+      if (document.hidden) return;
       backend.transportState().then((t) => {
         if (!alive) return;
         setTransport(t);
@@ -234,6 +235,7 @@ export function useStudio(options: StudioOptions = {}): Studio {
     if (!native) return;
     let alive = true;
     const id = window.setInterval(() => {
+      if (document.hidden) return;
       backend.studioMeters().then((m) => {
         if (alive) meters.current = m;
       }, () => {});

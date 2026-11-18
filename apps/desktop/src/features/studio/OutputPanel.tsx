@@ -147,14 +147,27 @@ export function TracksPanel({ song, onUpdate }: TracksProps) {
     <ul className="grid gap-1.5">
       {song.tracks.map((t) => (
         <li key={t.position} className="flex items-center gap-2" title={t.filePath}>
-          <input
-            aria-label={`Nombre de la pista ${t.position + 1}`}
-            value={t.name}
-            maxLength={80}
-            onChange={(e) => onUpdate(t.position, e.target.value || t.name, t.role)}
-            onKeyDown={(e) => e.stopPropagation()}
-            className={`${field} min-w-0 flex-1`}
-          />
+          <div className="flex min-w-0 flex-1 flex-col">
+            <input
+              key={t.name}
+              aria-label={`Nombre de la pista ${t.position + 1}`}
+              defaultValue={t.name}
+              maxLength={80}
+              onBlur={(e) => {
+                const name = e.target.value.trim();
+                if (!name) e.target.value = t.name; // a track always has a name
+                else if (name !== t.name) onUpdate(t.position, name, t.role);
+              }}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+              }}
+              className={`${field} min-w-0`}
+            />
+            <span className="truncate px-2 text-[10px] text-ink-500" data-track-file>
+              {t.filePath.split(/[\\/]/).pop()}
+            </span>
+          </div>
           <select
             aria-label={`Qué es la pista ${t.position + 1}`}
             value={t.role}

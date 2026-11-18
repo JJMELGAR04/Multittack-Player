@@ -65,6 +65,15 @@ export function TempoControl({ song, detected, analysing, ratio, transport, onTa
   const [tapped, setTapped] = useState<number | null>(null);
   const original = song.originalBpm;
   const target = original ? (song.targetBpm ?? original) : null;
+  const requested = useRef(target);
+  useEffect(() => {
+    requested.current = target;
+  }, [target]);
+  const stepBpm = (d: number) => {
+    if (requested.current === null) return;
+    requested.current = requested.current + d;
+    onTargetBpm(requested.current);
+  };
   const quality = tempoQuality(ratio);
   const small = "rounded-md border border-ink-700 bg-ink-850 px-2 py-1 text-xs text-ink-200 hover:bg-ink-700 disabled:opacity-40";
 
@@ -110,9 +119,9 @@ export function TempoControl({ song, detected, analysing, ratio, transport, onTa
         {original && target ? (
           <>
             <div className="flex flex-wrap items-center gap-2">
-              <button type="button" className={small} onClick={() => onTargetBpm(target - 1)} aria-label="Bajar 1 BPM">−1</button>
+              <button type="button" className={small} onClick={() => stepBpm(-1)} aria-label="Bajar 1 BPM">−1</button>
               <BpmInput value={target} onCommit={onTargetBpm} label="BPM de reproducción" />
-              <button type="button" className={small} onClick={() => onTargetBpm(target + 1)} aria-label="Subir 1 BPM">+1</button>
+              <button type="button" className={small} onClick={() => stepBpm(1)} aria-label="Subir 1 BPM">+1</button>
               <span className="font-mono text-sm text-ink-200">{formatPercent(ratio)}</span>
               <button type="button" className={`${small} flex items-center gap-1`} disabled={ratio === 1} onClick={() => onTargetBpm(null)}>
                 <RotateCcw size={12} /> Original
