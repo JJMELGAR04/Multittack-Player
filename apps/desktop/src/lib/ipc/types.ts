@@ -14,6 +14,14 @@ export interface AppInfo {
   arch: string;
 }
 
+export interface AppLicenses {
+  /** Full text of the LIVEPLAYER license (AGPL-3.0). */
+  license: string;
+  /** THIRD_PARTY_NOTICES.md (Markdown). */
+  thirdParty: string;
+  sourceUrl: string;
+}
+
 export interface EngineInfo {
   /** Version of the LIVEPLAYER native engine (C++). */
   engineVersion: string;

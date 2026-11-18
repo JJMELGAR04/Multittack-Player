@@ -1,6 +1,6 @@
 # LIVEPLAYER — Entorno de desarrollo (Windows)
 
-> Esto es solo para **desarrollar**. El usuario final no necesitará nada de esto (ver la fase 7).
+> Esto es solo para **desarrollar**. El usuario final no necesitará nada de esto (para instalar la app ver [INSTALAR.md](INSTALAR.md)).
 
 ## Herramientas (todas gratuitas)
 

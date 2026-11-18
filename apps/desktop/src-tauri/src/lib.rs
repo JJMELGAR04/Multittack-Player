@@ -49,6 +49,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             commands::app::app_info,
+            commands::app::app_licenses,
             commands::engine::engine_info,
             commands::engine::engine_ping,
             commands::engine::audio_diagnostics,

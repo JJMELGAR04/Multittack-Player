@@ -716,6 +716,17 @@ try {
   await shot("15-performance");
   void firstLoad;
 
+  // ---- Phase 7: About (version + licenses carried by the installed app) ----
+  const appVersion = (await invoke("app_info")).appVersion;
+  const aboutVersion = await evaluate(`document.querySelector("[data-about-version]")?.textContent`);
+  check("About shows the app version", aboutVersion === `v${appVersion}`, `${aboutVersion} / ${appVersion}`);
+  await evaluate(`document.querySelector("[data-about-third-party]").click()`);
+  await waitFor(`(document.querySelector("[data-about-text]")?.textContent ?? "").includes("Aleksey Vaneev")`, "third-party notices");
+  await evaluate(`document.querySelector("[data-about-license]").click()`);
+  await waitFor(`(document.querySelector("[data-about-text]")?.textContent ?? "").includes("GNU AFFERO GENERAL PUBLIC LICENSE")`, "AGPL text");
+  check("About shows the third-party notices and the AGPL text", true);
+  await shot("16-about");
+
   await invoke("transport_set_master_gain", { gain: 1 });
 
   console.log(JSON.stringify(checks, null, 2));

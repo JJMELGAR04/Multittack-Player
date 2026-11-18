@@ -19,10 +19,14 @@ fn main() {
     println!("cargo:rerun-if-changed={}", repo_root.join("third_party/asio").display());
 
     let mut cfg = cmake::Config::new(&engine_dir);
-    // Always optimised: real-time audio code must not run unoptimised, and the
-    // Rust binary links the release CRT (/MD) on MSVC.
+    // Always optimised: real-time audio code must not run unoptimised.
     cfg.profile("RelWithDebInfo")
         .define("LIVEPLAYER_ENGINE_BUILD_TESTS", "OFF");
+    // Same C runtime as the Rust binary: static (/MT) when built with
+    // crt-static (.cargo/config.toml), so the app needs no VC++ Redistributable.
+    let crt_static = std::env::var("CARGO_CFG_TARGET_FEATURE").map(|f| f.split(",").any(|x| x == "crt-static")).unwrap_or(false);
+    cfg.define("LIVEPLAYER_STATIC_CRT", if crt_static { "ON" } else { "OFF" });
+    cfg.static_crt(crt_static);
     if let Ok(juce) = std::env::var("LIVEPLAYER_JUCE_DIR") {
         cfg.define("LIVEPLAYER_JUCE_DIR", juce);
     }

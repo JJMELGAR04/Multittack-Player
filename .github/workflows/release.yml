@@ -1,0 +1,79 @@
+# Builds the installers on GitHub's free runners (public repository):
+#   Windows -> LIVEPLAYER_<version>_x64-setup.exe
+#   macOS   -> LIVEPLAYER_<version>_aarch64.dmg (Apple Silicon) and _x64.dmg (Intel)
+# Started by hand: Actions tab -> Installers -> Run workflow. The files appear
+# under "Artifacts" of the run; with "publish" checked they are also attached
+# to a draft GitHub Release (v<version>) that can be published from Releases.
+name: Installers
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Attach the installers to a draft GitHub Release"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  installer:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            bundle: nsis
+            pattern: "*.exe"
+          - name: macOS (Apple Silicon)
+            os: macos-latest
+            bundle: dmg
+            pattern: "*.dmg"
+          - name: macOS (Intel)
+            os: macos-15-intel
+            bundle: dmg
+            pattern: "*.dmg"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: ASIO SDK
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        run: node tools/fetch-asio-sdk.mjs
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Build installer
+        run: node tools/build-installer.mjs
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LIVEPLAYER-${{ matrix.name }}
+          path: instaladores/${{ matrix.pattern }}
+          if-no-files-found: error
+
+      - name: Attach to draft release
+        if: inputs.publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          gh release view "v$version" >/dev/null 2>&1 || gh release create "v$version" --draft --title "LIVEPLAYER $version" --notes "Instalación: docs/INSTALAR.md" || true
+          gh release upload "v$version" instaladores/${{ matrix.pattern }} --clobber

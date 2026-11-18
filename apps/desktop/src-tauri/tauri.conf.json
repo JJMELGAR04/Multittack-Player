@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "LIVEPLAYER",
-  "version": "0.6.0",
+  "version": "1.0.0",
   "identifier": "com.liveplayer.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -27,8 +27,14 @@
     }
   },
   "bundle": {
-    "active": false,
+    "active": true,
     "targets": "all",
+    "publisher": "LIVEPLAYER",
+    "copyright": "LIVEPLAYER · GNU AGPL-3.0-or-later",
+    "category": "Music",
+    "shortDescription": "Reproductor multitrack para tocar en vivo",
+    "longDescription": "LIVEPLAYER reproduce secuencias multitrack para tocar en vivo: click, cues, mezcla por canción, setlists y Live Mode.",
+    "homepage": "https://github.com/JJMELGAR04/Multittack-Player",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -36,8 +42,24 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "offlineInstaller",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": [
+          "Spanish"
+        ],
+        "displayLanguageSelector": false,
+        "installerIcon": "icons/icon.ico",
+        "startMenuFolder": "LIVEPLAYER"
+      }
+    },
     "macOS": {
-      "minimumSystemVersion": "11.0"
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": "-"
     }
   }
 }
